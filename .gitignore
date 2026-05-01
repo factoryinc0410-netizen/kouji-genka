@@ -1,0 +1,104 @@
+# ============================================================
+#  注文書自動作成システム — Git 管理除外設定
+# ============================================================
+
+# ── 機密情報 ────────────────────────────────────────────────
+# .env は機密（SECRET_KEY 等）を含むため絶対にコミットしない。
+# 設定テンプレートは deploy_linux/.env.linux.template を参照。
+.env
+.env.local
+.env.*.local
+*.env.backup
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ── 仮想環境 ────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+chat/backend/venv/
+
+# ── データベース（実データ） ────────────────────────────────
+# 開発時に生成される SQLite ファイル。本番データはデプロイ先で管理する。
+*.db
+*.sqlite
+*.sqlite3
+web_app/app.db
+web_app/factory_skills.db
+web_app/data/*.db
+chat/backend/*.db
+
+# ── ログ ────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── プレビュー成果物（generate_previews.py で再生成可能） ────
+preview_*.pdf
+preview_*.png
+preview_*.html
+
+# ── ユーザー生成ファイル（アップロード/出力） ───────────────
+web_app/uploads/
+web_app/outputs/
+web_app/outputs_cc/
+chat/backend/uploads/
+
+# ── 一時ファイル / OS ファイル ──────────────────────────────
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Windows COM 一時ディレクトリ（誤ってルート配下に出来た場合の保険）
+C:\tmp_chukumon/
+
+# ── IDE / エディタ ──────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+.project
+.pydevproject
+
+# ── Claude Code（ローカル設定） ─────────────────────────────
+.claude/
+
+# ── Node.js (chat/frontend) ─────────────────────────────────
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.npm
+.pnpm-store/
+
+# ── テスト・カバレッジ ──────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+nosetests.xml
+coverage.xml
+
+# ── Playwright ─────────────────────────────────────────────
+playwright-report/
+test-results/
+
+# ── その他 ──────────────────────────────────────────────────
+*.pid
+*.pid.lock

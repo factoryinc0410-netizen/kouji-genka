@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+
+{% block title %}注文書自動作成 - Factoryskills{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item active">注文書自動作成</li>
+        </ol>
+    </nav>
+    <h2><i class="bi bi-file-earmark-pdf me-2"></i>注文書自動作成</h2>
+    <p class="text-muted">Excel依頼書をアップロードすると、注文書・注文請書PDFを一括生成します。</p>
+</div>
+
+<!-- アラート表示エリア -->
+<div id="upload-alert" class="alert d-none" role="alert"></div>
+
+<!-- アップロードフォーム -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-cloud-arrow-up me-1"></i>ファイルアップロード
+    </div>
+    <div class="card-body">
+        <form id="upload-form">
+            <!-- ドラッグ＆ドロップゾーン -->
+            <div id="drop-zone" class="upload-zone text-center p-5 border border-2 border-dashed rounded">
+                <i class="bi bi-file-earmark-excel display-4 text-success"></i>
+                <p class="mt-3 mb-1 fw-bold">Excel依頼書をドラッグ＆ドロップ</p>
+                <p class="text-muted mb-3">または</p>
+                <button type="button" id="file-select-btn" class="btn btn-outline-primary">
+                    <i class="bi bi-folder2-open me-1"></i>ファイルを選択
+                </button>
+                <input type="file" id="file-input" accept=".xlsx,.xls" class="d-none">
+                <p class="mt-2 text-muted small mb-0">対応形式: .xlsx / .xls（最大 50MB）</p>
+            </div>
+
+            <!-- 選択済みファイル情報 -->
+            <div id="selected-file-info" class="d-none mt-3">
+                <div class="d-flex align-items-center justify-content-between bg-light rounded p-3">
+                    <div>
+                        <i class="bi bi-file-earmark-excel text-success me-2"></i>
+                        <span id="selected-file-name" class="fw-bold"></span>
+                    </div>
+                    <button type="button" id="remove-file-btn" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- アップロードボタン -->
+            <div class="mt-3">
+                <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
+                    <i class="bi bi-cloud-arrow-up me-1"></i>アップロード
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 確認画面セクション（アップロード後・PDF生成前に表示） -->
+<div id="confirm-section" class="card shadow-sm mb-4 d-none">
+    <div class="card-header bg-info text-white">
+        <i class="bi bi-table me-1"></i>抽出データ確認
+    </div>
+    <div class="card-body">
+        <p class="mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            抽出データを確認してください。
+        </p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover mb-3">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:22%">業者名</th>
+                        <th style="width:10%">契約日</th>
+                        <th style="width:14%">請負金額</th>
+                        <th style="width:12%">工事価格</th>
+                        <th style="width:10%">消費税</th>
+                        <th style="width:10%">工期（自）</th>
+                        <th style="width:10%">工期（至）</th>
+                    </tr>
+                </thead>
+                <tbody id="confirm-table-body">
+                    <!-- JS で動的生成 -->
+                </tbody>
+            </table>
+        </div>
+        <div class="d-flex justify-content-end gap-2">
+            <button type="button" id="confirm-cancel-btn" class="btn btn-outline-secondary">
+                <i class="bi bi-x-lg me-1"></i>キャンセル
+            </button>
+            <button type="button" id="confirm-generate-btn" class="btn btn-primary btn-lg">
+                <i class="bi bi-file-earmark-pdf me-1"></i>この内容でPDFを生成する
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- プログレスセクション（アップロード後に表示） -->
+<div id="progress-section" class="card shadow-sm mb-4 d-none">
+    <div class="card-header">
+        <i class="bi bi-hourglass-split me-1"></i>処理状況
+    </div>
+    <div class="card-body">
+        <div class="progress mb-3" style="height: 24px;">
+            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width: 0%"></div>
+        </div>
+        <p id="progress-status" class="mb-1 fw-bold"></p>
+        <p id="progress-detail" class="text-muted small mb-0"></p>
+    </div>
+</div>
+
+<!-- 結果セクション（完了/エラー時に表示） -->
+<div id="result-section" class="card shadow-sm mb-4 d-none">
+    <div class="card-header">
+        <i class="bi bi-clipboard-check me-1"></i>処理結果
+    </div>
+    <div class="card-body" id="result-content">
+    </div>
+</div>
+
+<!-- ジョブ履歴 -->
+<div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-1"></i>処理履歴</span>
+        <a href="/orders/" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-clockwise me-1"></i>更新
+        </a>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ファイル名</th>
+                        <th>ステータス</th>
+                        <th>業者数</th>
+                        <th>登録日時</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="job-history-table">
+                    {% if jobs %}
+                    {% for job in jobs %}
+                    <tr>
+                        <td>
+                            <i class="bi bi-file-earmark-excel text-success me-1"></i>
+                            {{ job.filename }}
+                        </td>
+                        <td>
+                            {% if job.status == 'completed' %}
+                            <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>完了</span>
+                            {% elif job.status == 'processing' %}
+                            <span class="badge bg-primary"><i class="bi bi-gear-fill me-1 spin"></i>処理中</span>
+                            {% elif job.status == 'pending' %}
+                            <span class="badge bg-secondary"><i class="bi bi-hourglass-split me-1"></i>待機中</span>
+                            {% elif job.status == 'draft' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-pencil-square me-1"></i>確認待ち</span>
+                            {% elif job.status == 'error' %}
+                            <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>エラー</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if job.total_vendors %}
+                            {{ job.success_count or 0 }} / {{ job.total_vendors }}
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td class="text-muted small">{{ job.created_at }}</td>
+                        <td>
+                            {% if job.status == 'completed' %}
+                            <a href="/orders/{{ job.id }}/download" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-download me-1"></i>DL
+                            </a>
+                            {% elif job.status == 'error' %}
+                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="tooltip"
+                                    title="{{ job.error_message[:100] if job.error_message else 'エラー詳細なし' }}">
+                                <i class="bi bi-info-circle"></i>
+                            </button>
+                            {% elif job.status == 'pending' or job.status == 'processing' %}
+                            <button class="btn btn-sm btn-outline-info" data-poll-job="{{ job.id }}"
+                                    data-filename="{{ job.filename }}">
+                                <i class="bi bi-eye me-1"></i>確認
+                            </button>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox display-6 d-block mb-2"></i>
+                            まだ処理履歴はありません。
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/polling.js?v={{ app_version }}"></script>
+<script>
+    // Bootstrap tooltips初期化
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+        new bootstrap.Tooltip(el);
+    });
+</script>
+{% endblock %}

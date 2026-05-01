@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+:root {
+  /* ── Design System: Factory Platform ── */
+  /* Primary */
+  --primary: #1B2A4A;
+  --primary-light: #2D4A7A;
+  --primary-dark: #111C33;
+
+  /* Secondary / Background */
+  --bg-warm: #F5F3F0;
+  --bg-page: #F8F7F5;
+
+  /* Accent */
+  --accent-orange: #E07B3C;
+  --accent-orange-hover: #C96A30;
+  --accent-green: #3D8B6E;
+  --accent-green-light: #E8F5EF;
+
+  /* Surface */
+  --surface: #FFFFFF;
+
+  /* Text */
+  --text-primary: #2C2C2C;
+  --text-secondary: #6B7280;
+  --text-tertiary: #9CA3AF;
+  --text-on-dark: #FFFFFF;
+  --text-on-dark-muted: #B0BEC5;
+
+  /* Border */
+  --border: #E5E7EB;
+  --border-light: #F0EFED;
+
+  /* Status */
+  --success: #3D8B6E;
+  --danger: #DC3545;
+  --warning: #E07B3C;
+  --info: #2D4A7A;
+
+  /* Sidebar */
+  --sidebar-width: 64px;
+  --sidebar-expanded: 220px;
+  --header-height: 56px;
+  --bottom-nav-height: 64px;
+}
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-light: var(--primary-light);
+  --color-primary-dark: var(--primary-dark);
+  --color-accent-orange: var(--accent-orange);
+  --color-accent-orange-hover: var(--accent-orange-hover);
+  --color-accent-green: var(--accent-green);
+  --color-accent-green-light: var(--accent-green-light);
+  --color-bg-warm: var(--bg-warm);
+  --color-bg-page: var(--bg-page);
+  --color-surface: var(--surface);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg-page);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+}
+
+/* スクロールバー */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E0;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #A0AEC0;
+}

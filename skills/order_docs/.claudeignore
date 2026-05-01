@@ -1,0 +1,23 @@
+# Pythonのキャッシュ・仮想環境（絶対に読ませない）
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# アプリケーションのデータ・ログ（トークン大量消費の原因）
+*.log
+logs/
+temp/
+*.pdf
+*.xlsx
+*.xls
+
+# テンプレートや出力先フォルダ（重いバイナリファイルが入るため除外）
+04_テンプレート/
+output/
+downloads/
+
+# OSのシステムファイル
+.DS_Store
+Thumbs.db

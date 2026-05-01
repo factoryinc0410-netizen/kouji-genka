@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}集計処理 - 工事日報集計{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><i class="bi bi-speedometer2 me-2"></i>工事日報集計</h3>
+</div>
+
+{% set active_tab = "aggregate" %}
+{% include "construction_cost/_nav.html" %}
+
+<div class="mt-4"></div>
+
+{% if msg %}
+<div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- テンプレートダウンロード -->
+<div class="card mb-4 border-success">
+    <div class="card-header bg-success bg-opacity-10 text-success">
+        <i class="bi bi-file-earmark-spreadsheet me-1"></i>
+        <strong>STEP1:</strong> 入力用テンプレートのダウンロード
+    </div>
+    <div class="card-body">
+        <p class="mb-2">
+            DBの最新マスタ（現場名・作業員名）を反映した
+            <strong>プルダウン付きExcel</strong> を生成します。
+            このテンプレートを使って日報を入力すれば、表記揺れによる集計エラーを防止できます。
+        </p>
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">対象年月（任意）</label>
+                <input type="month" id="templateMonth" class="form-control form-control-sm">
+            </div>
+            <div class="col-md-4">
+                <a id="templateDownloadBtn" href="/construction-cost/template/download"
+                   class="btn btn-success btn-sm">
+                    <i class="bi bi-download me-1"></i>テンプレートをダウンロード
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- アップロードフォーム -->
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-upload me-1"></i><strong>STEP2:</strong> 日報ファイルのアップロードと集計
+    </div>
+    <div class="card-body">
+        <form method="post" action="/construction-cost/aggregate" enctype="multipart/form-data" id="aggregateForm">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">対象年月</label>
+                    <input type="month" name="target_month" class="form-control" required
+                           value="{{ target_month if target_month is defined and target_month else '' }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">日報Excelファイル</label>
+                    <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
+                    <small class="text-muted">1ヶ月分の日報Excel（「1日」〜「31日」+「リスト一覧」シート構成）</small>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100" id="btnSubmit">
+                        <i class="bi bi-play-circle me-1"></i>集計実行
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if result is defined and result %}
+<!-- 集計結果 -->
+<div class="card mb-4 border-success">
+    <div class="card-header bg-success text-white">
+        <i class="bi bi-check-circle me-1"></i>集計結果（{{ result.target_month }}）
+    </div>
+    <div class="card-body">
+
+        <!-- 警告表示 -->
+        {% if result.errors %}
+        <div class="alert alert-warning">
+            <h6><i class="bi bi-exclamation-triangle me-1"></i>警告（{{ result.errors|length }}件）</h6>
+            <ul class="mb-0">
+                {% for err in result.errors %}
+                <li>{{ err }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- 現場別原価管理表 プレビュー -->
+        <h5 class="mb-3">現場別原価管理表</h5>
+        <div class="table-responsive mb-4">
+            <table class="table table-sm table-bordered table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>現場名</th>
+                        <th class="text-end">予算</th>
+                        <th class="text-end">前月末累計</th>
+                        <th class="text-end">人件費</th>
+                        <th class="text-end">当月支払計</th>
+                        <th class="text-end">新累計</th>
+                        <th class="text-end">予算残</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sc in result.site_costs %}
+                    <tr class="{% if sc.remaining < 0 %}table-danger{% endif %}">
+                        <td>{{ sc.site_name }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(sc.budget) }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(sc.cumulative_before) }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(sc.labor_cost) }}</td>
+                        <td class="text-end fw-bold">{{ "{:,.0f}".format(sc.monthly_cost) }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(sc.cumulative_after) }}</td>
+                        <td class="text-end {% if sc.remaining < 0 %}text-danger fw-bold{% endif %}">
+                            {{ "{:,.0f}".format(sc.remaining) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 個人別集計表 プレビュー -->
+        <h5 class="mb-3">個人別集計表</h5>
+        <div class="table-responsive mb-4">
+            <table class="table table-sm table-bordered table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>氏名</th>
+                        <th>グループ</th>
+                        <th>職種</th>
+                        <th class="text-end">出勤日数</th>
+                        <th class="text-end">基本(h)</th>
+                        <th class="text-end">時間外(h)</th>
+                        <th class="text-end">人件費</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ws in result.worker_summaries %}
+                    <tr>
+                        <td>{{ ws.worker_name }}</td>
+                        <td>{{ ws.group_name or '-' }}</td>
+                        <td>{{ ws.role or '-' }}</td>
+                        <td class="text-end">{{ ws.days_worked }}</td>
+                        <td class="text-end">{{ "%.1f"|format(ws.total_basic) }}</td>
+                        <td class="text-end">{{ "%.1f"|format(ws.total_overtime) }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(ws.labor_cost) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ダウンロード＆確定ボタン -->
+        <div class="row g-3">
+            <div class="col-md-4">
+                <a href="/construction-cost/aggregate/download/{{ target_month }}/{{ site_path }}"
+                   class="btn btn-outline-success w-100">
+                    <i class="bi bi-download me-1"></i>現場別原価管理表
+                </a>
+            </div>
+            <div class="col-md-4">
+                <a href="/construction-cost/aggregate/download/{{ target_month }}/{{ worker_path }}"
+                   class="btn btn-outline-success w-100">
+                    <i class="bi bi-download me-1"></i>個人別集計表
+                </a>
+            </div>
+            <div class="col-md-4">
+                <form method="post" action="/construction-cost/aggregate/confirm"
+                      onsubmit="return confirm('{{ target_month }} の累計金額を確定します。\nこの操作は各現場の累計支払額を更新します。\n\nよろしいですか？');">
+                    <input type="hidden" name="log_id" value="{{ log_id }}">
+                    <button type="submit" class="btn btn-danger w-100">
+                        <i class="bi bi-check2-circle me-1"></i>累計を確定する
+                    </button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endif %}
+
+<!-- 操作手順の案内 -->
+<div class="card bg-light">
+    <div class="card-body">
+        <h6><i class="bi bi-info-circle me-1"></i>操作手順</h6>
+        <ol class="mb-0">
+            <li>対象年月を選択し、日報Excelファイルをアップロードして「集計実行」をクリック</li>
+            <li>集計結果のプレビューを確認し、Excelをダウンロード</li>
+            <li>内容に問題がなければ「累計を確定する」ボタンで現場マスタの累計金額を更新</li>
+        </ol>
+        <small class="text-muted mt-2 d-block">
+            ※「累計を確定する」を押すまでは現場マスタの累計金額は変更されません。<br>
+            ※同じ月の累計は1回のみ確定できます（二重更新防止）。
+        </small>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 集計実行ボタンのローディング
+document.getElementById('aggregateForm').addEventListener('submit', function() {
+    var btn = document.getElementById('btnSubmit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>集計中...';
+});
+
+// テンプレートDLリンクに年月パラメータを動的反映
+var tmplMonth = document.getElementById('templateMonth');
+var tmplBtn = document.getElementById('templateDownloadBtn');
+tmplMonth.addEventListener('change', function() {
+    var base = '/construction-cost/template/download';
+    if (this.value) {
+        tmplBtn.href = base + '?target_month=' + this.value;
+    } else {
+        tmplBtn.href = base;
+    }
+});
+</script>
+{% endblock %}

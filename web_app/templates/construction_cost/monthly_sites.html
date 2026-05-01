@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}現場別月別集計 - 工事日報集計{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><i class="bi bi-speedometer2 me-2"></i>工事日報集計</h3>
+</div>
+
+{% set active_tab = "dashboard" %}
+{% include "construction_cost/_nav.html" %}
+
+<div class="mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5><i class="bi bi-calendar3 me-2"></i>現場別 月別集計</h5>
+        <a href="/construction-cost/" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left me-1"></i>ダッシュボードに戻る
+        </a>
+    </div>
+
+    {% if months|length == 0 %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle me-1"></i>確定済みの集計データがありません。
+        <a href="/construction-cost/aggregate">集計処理</a>を実行し、累計を確定してください。
+    </div>
+    {% endif %}
+
+    {% for month, rows in months.items() %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-calendar-month me-1"></i><strong>{{ month }}</strong>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>現場</th>
+                            <th class="text-end">予算額</th>
+                            <th class="text-end">当月支払</th>
+                            <th class="text-end">更新前累計</th>
+                            <th class="text-end">更新後累計</th>
+                            <th class="text-end">予算残</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set ns = namespace(month_total=0) %}
+                        {% for r in rows %}
+                        {% set remaining = r.budget - r.cumulative_after %}
+                        <tr class="{% if remaining < 0 %}table-danger{% endif %}">
+                            <td>
+                                <span class="text-muted me-1 small">[{{ r.site_code }}]</span>{{ r.site_name }}
+                            </td>
+                            <td class="text-end">{{ "{:,.0f}".format(r.budget) }}</td>
+                            <td class="text-end fw-bold">{{ "{:,.0f}".format(r.monthly_cost) }}</td>
+                            <td class="text-end">{{ "{:,.0f}".format(r.cumulative_before) }}</td>
+                            <td class="text-end">{{ "{:,.0f}".format(r.cumulative_after) }}</td>
+                            <td class="text-end {% if remaining < 0 %}text-danger fw-bold{% endif %}">
+                                {{ "{:,.0f}".format(remaining) }}
+                            </td>
+                        </tr>
+                        {% set ns.month_total = ns.month_total + r.monthly_cost %}
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr class="fw-bold">
+                            <td colspan="2">月合計</td>
+                            <td class="text-end">{{ "{:,.0f}".format(ns.month_total) }}</td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

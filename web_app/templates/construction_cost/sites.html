@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+{% block title %}現場マスタ - 工事日報集計{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><i class="bi bi-speedometer2 me-2"></i>工事日報集計</h3>
+</div>
+
+{% set active_tab = "sites" %}
+{% include "construction_cost/_nav.html" %}
+
+<div class="mt-4">
+<h5><i class="bi bi-building me-2"></i>現場マスタ管理</h5>
+</div>
+
+{% if msg %}
+<div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- 新規追加フォーム -->
+<div class="card mb-4">
+    <div class="card-header bg-success text-white">
+        <i class="bi bi-plus-circle me-1"></i>新規追加
+    </div>
+    <div class="card-body">
+        <form method="post" action="/construction-cost/sites/add">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">現場名</label>
+                    <input type="text" name="site_name" class="form-control form-control-sm" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">予算金額</label>
+                    <input type="number" name="budget" class="form-control form-control-sm" step="1" value="0">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">初期累計額</label>
+                    <input type="number" name="initial_cumulative_cost" class="form-control form-control-sm" step="1" value="0">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">ステータス</label>
+                    <select name="status" class="form-select form-select-sm">
+                        <option value="進行中">進行中</option>
+                        <option value="完了">完了</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-success btn-sm w-100">
+                        <i class="bi bi-plus-lg me-1"></i>追加
+                    </button>
+                </div>
+            </div>
+            <small class="text-muted">グループ別予算は登録後の編集画面で設定できます。</small>
+        </form>
+    </div>
+</div>
+
+<!-- 一覧テーブル -->
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-list-ul me-1"></i>登録済み現場 （{{ sites|length }}件）
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th style="width:30px;"></th>
+                        <th>現場名</th>
+                        <th class="text-end">予算金額</th>
+                        <th class="text-end">初期累計額</th>
+                        <th class="text-end">累計支払額</th>
+                        <th class="text-end">予算残</th>
+                        <th class="text-center">ステータス</th>
+                        <th class="text-center" style="width:180px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in sites %}
+                    {% set site_idx = loop.index %}
+                    {% set gb_list = site_gb_map.get(s.site_id, []) %}
+                    <!-- 親行 -->
+                    <tr class="site-parent"
+                        {% if gb_list|length > 0 %}
+                        style="cursor:pointer;"
+                        onclick="toggleSiteGb('site-gb-{{ site_idx }}')"
+                        {% endif %}>
+                        <td class="text-center">
+                            {% if gb_list|length > 0 %}
+                            <i class="bi bi-chevron-right toggle-icon" id="icon-site-gb-{{ site_idx }}"></i>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="text-muted me-1 small">[{{ s.site_code }}]</span>{{ s.site_name }}
+                        </td>
+                        <td class="text-end">{{ "{:,.0f}".format(s.budget) }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(s.initial_cumulative_cost or 0) }}</td>
+                        <td class="text-end">{{ "{:,.0f}".format(s.cumulative) }}</td>
+                        <td class="text-end {% if s.budget - s.cumulative < 0 %}text-danger fw-bold{% endif %}">
+                            {{ "{:,.0f}".format(s.budget - s.cumulative) }}
+                        </td>
+                        <td class="text-center">
+                            {% if s.status == '進行中' %}
+                            <span class="badge bg-primary">進行中</span>
+                            {% else %}
+                            <span class="badge bg-secondary">完了</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center" onclick="event.stopPropagation();">
+                            <button class="btn btn-outline-primary btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#editModal{{ s.site_id }}">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <form method="post" action="/construction-cost/sites/delete"
+                                  class="d-inline"
+                                  onsubmit="return confirm('「{{ s.site_name }}」を無効化しますか？\n※履歴データは保持されます。');">
+                                <input type="hidden" name="site_id" value="{{ s.site_id }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm" title="無効化">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    <!-- グループ別予算の展開行 -->
+                    {% for gb in gb_list %}
+                    <tr class="gb-detail site-gb-{{ site_idx }}" style="display:none;">
+                        <td></td>
+                        <td class="ps-4 text-muted">
+                            <i class="bi bi-dash me-1"></i>{{ gb.group_name }}
+                        </td>
+                        <td class="text-end text-muted">{{ "{:,.0f}".format(gb.budget) }}</td>
+                        <td class="text-end text-muted">{{ "{:,.0f}".format(gb.initial_cumulative_cost or 0) }}</td>
+                        <td colspan="2"></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+
+                    {% if sites|length == 0 %}
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-4">
+                            現場が登録されていません。上のフォームから追加してください。
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 編集モーダル群（テーブル外に配置） -->
+{% for s in sites %}
+{% set gb_list = site_gb_map.get(s.site_id, []) %}
+{% set site_histories = site_history_map.get(s.site_id, []) %}
+<div class="modal fade" id="editModal{{ s.site_id }}" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="post" action="/construction-cost/sites/update">
+                <div class="modal-header">
+                    <h5 class="modal-title">現場編集: <span class="text-muted fw-normal small me-1">[{{ s.site_code }}]</span>{{ s.site_name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="site_id" value="{{ s.site_id }}">
+
+                    <!-- タブナビ -->
+                    <ul class="nav nav-tabs mb-3" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabBasic{{ s.site_id }}" type="button">基本情報</button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabBudget{{ s.site_id }}" type="button">グループ別予算</button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabHistory{{ s.site_id }}" type="button">
+                                月次履歴
+                                {% if site_histories|length > 0 %}
+                                <span class="badge bg-secondary ms-1">{{ site_histories|length }}</span>
+                                {% endif %}
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 基本情報タブ -->
+                        <div class="tab-pane fade show active" id="tabBasic{{ s.site_id }}">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">現場名</label>
+                                    <input type="text" name="site_name" class="form-control" value="{{ s.site_name }}" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">ステータス</label>
+                                    <select name="status" class="form-select">
+                                        <option value="進行中" {% if s.status == '進行中' %}selected{% endif %}>進行中</option>
+                                        <option value="完了" {% if s.status == '完了' %}selected{% endif %}>完了</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">初期累計額（導入前支払済み額）</label>
+                                    <input type="number" name="initial_cumulative_cost" class="form-control" step="1" value="{{ s.initial_cumulative_cost or 0 }}">
+                                    <small class="text-muted">通常は初回のみ設定</small>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">現在の累計支払額</label>
+                                    <input type="number" class="form-control" value="{{ s.cumulative }}" disabled>
+                                    <small class="text-muted">自動計算</small>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">予算合計</label>
+                                    <input type="number" class="form-control bg-light" id="budgetTotal{{ s.site_id }}" value="{{ s.budget }}" disabled>
+                                    <small class="text-muted">グループ予算の合計</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- グループ別予算タブ -->
+                        <div class="tab-pane fade" id="tabBudget{{ s.site_id }}">
+                            <div class="mb-2 d-flex justify-content-between align-items-center">
+                                <small class="text-muted">グループ別に予算を配分します。予算合計は自動計算されます。</small>
+                                <span class="badge bg-primary">合計: <span id="budgetBadge{{ s.site_id }}">{{ "{:,.0f}".format(s.budget) }}</span></span>
+                            </div>
+                            <div id="gbRows{{ s.site_id }}">
+                                {% for gb in gb_list %}
+                                <div class="row g-2 mb-2 gb-row">
+                                    <div class="col-md-4">
+                                        <select name="gb_group_name" class="form-select form-select-sm">
+                                            <option value="">--</option>
+                                            {% for g in groups %}
+                                            <option value="{{ g.group_name }}" {% if gb.group_name == g.group_name %}selected{% endif %}>{{ g.group_name }}</option>
+                                            {% endfor %}
+                                            {% if gb.group_name and gb.group_name not in groups|map(attribute='group_name')|list %}
+                                            <option value="{{ gb.group_name }}" selected>{{ gb.group_name }}</option>
+                                            {% endif %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input type="number" name="gb_budget" class="form-control form-control-sm gb-budget" step="1" value="{{ gb.budget }}" placeholder="予算額" onchange="recalcBudget({{ s.site_id }})">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input type="number" name="gb_initial" class="form-control form-control-sm" step="1" value="{{ gb.initial_cumulative_cost }}" placeholder="初期累計額">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="this.closest('.gb-row').remove(); recalcBudget({{ s.site_id }});">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <button type="button" class="btn btn-outline-success btn-sm" onclick="addGbRow({{ s.site_id }})">
+                                <i class="bi bi-plus-lg me-1"></i>グループ追加
+                            </button>
+                        </div>
+
+                        <!-- 月次履歴タブ -->
+                        <div class="tab-pane fade" id="tabHistory{{ s.site_id }}">
+                            {% if site_histories|length > 0 %}
+                            <small class="text-muted d-block mb-2">当月支払額を修正すると、累計が自動で再計算されます。</small>
+                            <table class="table table-sm table-bordered mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>対象年月</th>
+                                        <th class="text-end">当月支払額</th>
+                                        <th class="text-end">更新前累計</th>
+                                        <th class="text-end">更新後累計</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for h in site_histories %}
+                                    <tr>
+                                        <td>{{ h.target_month }}</td>
+                                        <td class="text-end">
+                                            <input type="hidden" name="hist_id" value="{{ h.history_id }}">
+                                            <input type="number" name="hist_monthly_cost" class="form-control form-control-sm text-end" step="1" value="{{ h.monthly_cost|int }}" style="width:140px; display:inline-block;">
+                                        </td>
+                                        <td class="text-end text-muted">{{ "{:,.0f}".format(h.cumulative_before) }}</td>
+                                        <td class="text-end fw-bold">{{ "{:,.0f}".format(h.cumulative_after) }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p class="text-muted text-center py-3 mb-0">この現場にはまだ確定済みの月次データがありません。</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<style>
+.site-parent:hover { background-color: rgba(0,0,0,0.04) !important; }
+.gb-detail { background-color: #f8f9fa; }
+.gb-detail td { font-size: 0.9em; }
+.toggle-icon { transition: transform 0.2s ease; font-size: 0.8em; }
+.toggle-icon.expanded { transform: rotate(90deg); }
+</style>
+
+<script>
+var groupOptions = [
+    {% for g in groups %}
+    {name: "{{ g.group_name }}"},
+    {% endfor %}
+];
+
+function toggleSiteGb(cls) {
+    var rows = document.querySelectorAll('.' + cls);
+    var icon = document.getElementById('icon-' + cls);
+    var isHidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function(r) { r.style.display = isHidden ? '' : 'none'; });
+    if (icon) icon.classList.toggle('expanded', isHidden);
+}
+
+function addGbRow(siteId) {
+    var container = document.getElementById('gbRows' + siteId);
+    var opts = '<option value="">--</option>';
+    groupOptions.forEach(function(g) {
+        opts += '<option value="' + g.name + '">' + g.name + '</option>';
+    });
+    var html = '<div class="row g-2 mb-2 gb-row">'
+        + '<div class="col-md-4"><select name="gb_group_name" class="form-select form-select-sm">' + opts + '</select></div>'
+        + '<div class="col-md-3"><input type="number" name="gb_budget" class="form-control form-control-sm gb-budget" step="1" value="0" placeholder="予算額" onchange="recalcBudget(' + siteId + ')"></div>'
+        + '<div class="col-md-3"><input type="number" name="gb_initial" class="form-control form-control-sm" step="1" value="0" placeholder="初期累計額"></div>'
+        + '<div class="col-md-2"><button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="this.closest(\'.gb-row\').remove(); recalcBudget(' + siteId + ');"><i class="bi bi-trash"></i></button></div>'
+        + '</div>';
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+function recalcBudget(siteId) {
+    var modal = document.getElementById('editModal' + siteId);
+    var inputs = modal.querySelectorAll('.gb-budget');
+    var total = 0;
+    inputs.forEach(function(inp) { total += parseFloat(inp.value || 0); });
+    document.getElementById('budgetTotal' + siteId).value = total;
+    var badge = document.getElementById('budgetBadge' + siteId);
+    if (badge) badge.textContent = total.toLocaleString('ja-JP');
+}
+</script>
+{% endblock %}

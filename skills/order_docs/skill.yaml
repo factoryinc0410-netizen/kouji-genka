@@ -1,0 +1,156 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  order_docs — 注文書自動作成スキル マニフェスト
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Anthropic Skill 仕様（"The Complete Guide to Building Skills for Claude"）
+# に準拠した定義ファイル。Claude がこのスキルを呼び出す際のメタデータを提供する。
+#
+# 実行エントリ: skills.order_docs.generate_order_docs.generate_from_excel()
+# 詳細仕様:     SYSTEM_SPEC.md（プロジェクトルート）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+name: order_docs
+version: 2.1.0
+display_name: 注文書自動作成スキル
+language: ja
+
+# ── Claude がこのスキルを選ぶかどうかを判断するための記述 ──
+# 「どういう時に使うべきか」を具体的に書く。Claude はこの description を
+# ユーザー要求と照合してスキル選択を行うため、曖昧な表現は避ける。
+description: >
+  建設工事の Excel 依頼書（下請業者一覧＋契約情報を含む .xlsx）を入力として、
+  1 業者につき 6 種類の契約書 PDF（注文書・注文請書・内訳書・契約条件書・
+  新旧対照表・約款）を生成し、注文書セット／注文請書セットとして合冊する。
+  複数業者を一括処理し、各業者ごとに構造化された BatchResult を返す。
+
+  使うべき場面:
+    - 「依頼書から注文書を作って」
+    - 「この Excel から下請契約書類一式を生成して」
+    - 「内訳書と契約条件書をまとめて PDF 化して」
+    - 「業者分の注文書セットを一括生成して」
+
+  使わない場面:
+    - 単一 PDF への軽微な編集（スキル起動コスト過大）
+    - 注文書以外の書類作成（請求書・見積書等は別スキル）
+    - Excel データの閲覧のみ（PDF 出力不要）
+
+# ── カテゴリ・タグ ──
+categories:
+  - document-automation
+  - construction
+  - pdf-generation
+tags:
+  - excel
+  - pdf
+  - playwright
+  - html-css
+  - pymupdf
+  - japanese
+  - construction-contract
+
+# ── エントリポイント ──
+# Python モジュールとしての呼び出し起点。
+entrypoint:
+  module: skills.order_docs.generate_order_docs
+  functions:
+    - name: generate_from_excel
+      signature: "(excel_path: Path, output_dir: Path | None = None, *, use_gui: bool = False, confirmed_vendors: list[dict] | None = None, work_tmp_base: Path | None = None) -> BatchResult"
+      description: Excel 依頼書から全業者分の書類セットを一括生成する主エントリ
+    - name: generate_for_vendor
+      signature: "(vendor_data: dict, excel_path: Path, output_dir: Path, *, work_tmp: Path | None = None) -> OrderDocumentSet"
+      description: 1 業者分だけの書類セットを生成する（バッチ内部でも利用）
+
+# ── 入力仕様 ──
+inputs:
+  - name: excel_path
+    type: path
+    required: true
+    description: 注文書作成依頼書 (.xlsx / .xls)。.xls の場合は自動的に .xlsx に変換される。
+  - name: output_dir
+    type: path
+    required: false
+    description: 出力ディレクトリ。未指定の場合は config.FOLDER_DONE / 【工事名】 を自動生成する。
+
+# ── 出力仕様 ──
+outputs:
+  type: BatchResult
+  fields:
+    - excel_path: str
+    - koji_kenmei: str | null
+    - total_vendors: int
+    - success_count: int
+    - results: list[OrderDocumentSet]
+    - error: str | null  # Pre-flight 失敗時もここに入る
+  artifacts:
+    - "{output_dir}/注文書_{業者名}.pdf"       # 業者ごと・注文書セット合冊 PDF
+    - "{output_dir}/注文請書_{業者名}.pdf"     # 業者ごと・注文請書セット合冊 PDF
+
+# ── 依存パッケージ ──
+# requirements.txt の # === Skills: order_docs === ブロックを参照。
+# 注: Playwright は別途 `python -m playwright install chromium` による
+#     Chromium バイナリのインストールが必要。
+requirements:
+  python: ">=3.10"
+  packages:
+    - openpyxl>=3.1
+    - PyMuPDF>=1.23
+    - pypdf>=4.0
+    - jinja2>=3.1
+    - playwright>=1.40
+
+# ── システム依存 ──
+system:
+  platform: windows
+  fonts:
+    required: false  # Chromium が OS フォントから自動選択するため必須ではない
+    preferred_paths:
+      # HTML テンプレートの font-family 指定と同期させること
+      - C:\Windows\Fonts\msmincho.ttc
+      - C:\Windows\Fonts\yumin.ttf
+      - C:\Windows\Fonts\meiryo.ttc
+      - C:\Windows\Fonts\msgothic.ttc
+  office:
+    required: false  # v2.0 から不要（.xls→.xlsx 変換時のみ任意）
+  libreoffice:
+    required: false  # v2.0 から完全に不要
+  chromium:
+    required: true   # v2.1: Playwright 経由で必要
+                     # インストール: python -m playwright install chromium
+
+# ── Claude に許可される操作 ──
+# このスキルを呼ぶ際、ファイル書き込みと Excel 読み取りが発生する。
+allowed-tools:
+  - Read         # 入力 Excel・テンプレート PDF の読み込み
+  - Write        # 生成 PDF の書き出し
+  - Bash         # Python 実行（venv 経由）
+  - Glob         # テンプレートファイル探索
+
+# ── セキュリティ・プライバシー ──
+security:
+  network_access: false       # 完全オフライン動作
+  external_api_calls: false
+  pii_handling: |
+    業者名・氏名・住所・契約金額などの個人／事業者情報を扱う。
+    生成された PDF は config.FOLDER_DONE 配下に保存され、
+    外部送信は行わない。
+
+# ── エラー動作 ──
+error_handling:
+  preflight_validation: true  # openpyxl.load_workbook(read_only=True) で事前検証
+  per_vendor_isolation: true  # 1 業者失敗でも残りは継続処理
+  result_granularity: document  # 書類単位で success/error を記録
+
+# ── 関連ドキュメント ──
+documentation:
+  spec: SYSTEM_SPEC.md
+  deploy_guide: DEPLOY_GUIDE.md
+  deprecated_modules:
+    - skills/order_docs/_deprecated/README.md            # LibreOffice 経由の旧実装
+    - skills/order_docs/_deprecated_reportlab/README.md  # v2.1 で廃止した ReportLab 実装
+
+# ── 保守メモ ──
+# 新しい帳票を追加する／依頼書フォーマットが変わった場合の手順は
+# SYSTEM_SPEC.md §10「拡張ガイド」を参照すること。
+# マジックナンバーの追加は禁止。config.py に集約する。
+maintenance:
+  config_single_source_of_truth: skills/order_docs/config.py
+  extension_guide: SYSTEM_SPEC.md#10-拡張ガイド--未来の開発者向け

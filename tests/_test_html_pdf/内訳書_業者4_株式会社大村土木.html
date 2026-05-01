@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>下請代金内訳書</title>
+<style>
+  /* ─────────── @page (A4 横) ───────────
+     動的行数レイアウト (v1.3.0-flow-layout):
+       行数は Excel 原本のまま可変。1 ページに収まらない場合は
+       CSS の静的フローで自然にページ送りされる。
+       下請金額・注記行・労務費/法定福利費はフッター領域として
+       ページ下端に固定せず、明細テーブルの直後に流れるように配置する。 */
+  @page {
+    size: A4 landscape;
+    margin: 8mm 12mm 8mm 12mm;
+    /* 有効幅: 297 - 24 = 273mm  有効高: 210 - 16 = 194mm */
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: "MS Mincho", "Yu Mincho", "Hiragino Mincho ProN", "IPAMincho", serif;
+    font-size: 7pt;
+    color: #000;
+    line-height: 1.1;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ─────────── タイトル ─────────── */
+  h1.title {
+    text-align: center;
+    font-size: 12pt;
+    font-weight: bold;
+    letter-spacing: 0.4em;
+    padding-left: 0.4em;
+    margin: 0 0 1.5mm 0;
+    line-height: 1.1;
+  }
+
+  /* ─────────── ページ 1 限定のヘッダ情報 (thead の外) ───────────
+     ヘッダ情報は <table> の外側に置くため、自然と 1 ページ目にだけ現れる。
+     Playwright の page.pdf() は body 冒頭コンテンツを 2 ページ目以降に
+     引きずらないため、これだけで「page-1-only header」が成立する。 */
+  .header-info {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1mm;
+    table-layout: fixed;
+  }
+  .header-info td {
+    padding: 0.3mm 2mm;
+    vertical-align: top;
+    font-size: 7.5pt;
+    line-height: 1.15;
+  }
+  .header-info .lbl { width: 8%;  font-weight: bold; }
+  .header-info .val { width: 25%; }
+  .header-info .party-lbl { width: 9%; font-weight: bold; }
+  .header-info .party-val { width: 29%; }
+
+  /* 工事名は折り返さず、一行で表示する（overflow-wrap を無効化） */
+  .header-info .val.koji-kenmei {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ─────────── メインテーブル ───────────
+     行高は ~2.5mm 目標に調整（font-size 6pt + padding 0.3pt + line-height 1.05 → 行高 ≈ 2.4mm）。
+     行数は Excel 原本のまま可変で、固定パディングなし（v1.3.0-flow-layout）。
+     <tbody> は通常フロー（Static Flow）で、position: absolute / fixed などは使わない。
+     下請金額以降のフッター領域もこの同じ <tbody> に連続して配置され、
+     ページ下端への固定は行わない。 */
+  table.main-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: 0.9pt solid #000;
+    font-size: 6pt;
+    /* 中身が空の <td> でも罫線を描画する（Firefox/Chromium 両対応） */
+    empty-cells: show;
+  }
+  table.main-table th,
+  table.main-table td {
+    border: 0.5pt solid #000;   /* 全セル罫線 黒 0.5pt */
+    padding: 0.3pt 2pt;
+    vertical-align: middle;
+    overflow: hidden;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    line-height: 1.05;
+    /* 空セルでセルが潰れないよう、最低でも 1 行分の高さを確保 */
+    min-height: 1em;
+  }
+
+  /* 単位列 (D) は全行タイプで中央揃え */
+  table.main-table td.unit,
+  table.main-table th.unit {
+    text-align: center;
+  }
+  /* 数値列 (E..N) は右寄せ＋等幅数字 */
+  table.main-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  /* テキスト列 (A/B/C) は左寄せ */
+  table.main-table td.txt {
+    text-align: left;
+  }
+
+  /* ─────────── thead (自動繰り返し) ─────────── */
+  table.main-table thead th {
+    background: #ececec;
+    font-weight: bold;
+    text-align: center;
+    font-size: 6.5pt;
+    padding: 0.5mm 1mm;
+    line-height: 1.1;
+  }
+  /* 2 ページ目以降も背景色が失われないよう -webkit-print-color-adjust を継承 */
+
+  /* ─────────── 列幅 (15 列固定, 合計 ~273mm) ─────────── */
+  col.c-a    { width: 21mm; }  /* A: 工種 */
+  col.c-b    { width: 32mm; }  /* B: 種別 */
+  col.c-c    { width: 32mm; }  /* C: 細別・規格 */
+  col.c-d    { width:  8mm; }  /* D: 単位 */
+  col.c-e    { width: 13mm; }  /* E: 元請契約 数量 */
+  col.c-f    { width: 13mm; }  /* F: 当初 数量 */
+  col.c-g    { width: 14mm; }  /* G: 当初 単価 */
+  col.c-h    { width: 19mm; }  /* H: 当初 金額 */
+  col.c-i    { width: 13mm; }  /* I: 変更 数量 */
+  col.c-j    { width: 14mm; }  /* J: 変更 単価 */
+  col.c-k    { width: 19mm; }  /* K: 変更 金額 */
+  col.c-l    { width: 13mm; }  /* L: 増減 数量 */
+  col.c-m    { width: 14mm; }  /* M: 増減 単価 */
+  col.c-n    { width: 19mm; }  /* N: 増減 金額 */
+  col.c-o    { width: 23mm; }  /* O: 備考 */
+
+  /* ─────────── 行タイプ別スタイル ─────────── */
+
+  /* 明細行 */
+  tr.row-item { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-item td.biko { font-size: 5.5pt; }
+
+  /* カテゴリ行（工種大分類） */
+  tr.row-category {
+    break-inside: avoid; page-break-inside: avoid;
+    break-after: avoid;  page-break-after: avoid;  /* 配下の明細行と離さない */
+  }
+  tr.row-category td {
+    background: #f3f3f3;
+    font-weight: bold;
+    font-size: 6.5pt;
+    padding: 0.3pt 2mm;
+  }
+
+  /* 合計行 */
+  tr.row-subtotal { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-subtotal td {
+    background: #f7f7f7;
+    border-top: 1pt solid #000;     /* 合計行上辺の太線 */
+    font-weight: bold;
+  }
+  tr.row-subtotal td.label { text-align: left; padding-left: 2mm; }
+
+  /* 値付きフッター行（労務費 / 法定福利費 等）
+     主表の item と同じ 15 列レイアウト。A 列だけ若干左寄せで目立たせる。 */
+  tr.row-footer-item { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-footer-item td {
+    background: #fcfcfc;
+    border-top: 0.4pt dashed #888;
+  }
+  tr.row-footer-item td.biko { font-size: 5.5pt; }
+
+  /* 純粋な注記行（※下請金額… の前置き文）
+     colspan=15 で全幅描画。数値は入らない。 */
+  tr.row-note { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-note td {
+    font-size: 5.5pt;
+    border-top: 0.3pt dotted #888;
+    text-align: left;
+    padding: 0.2mm 2mm;
+    background: #fafafa;
+    line-height: 1.05;
+  }
+
+  /* Excel 意図的な空白行（item と同じ罫線を保持・中身なし） */
+  /* 以前は罫線を薄く（#eaeaea / #fff）していたが、表の連続性が崩れて
+     見えるという指摘を受け、item 行と同じ黒 0.5pt に統一した。 */
+  tr.row-spacer { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-spacer td {
+    background: #fff;
+    padding: 0.3pt 2pt;
+    font-size: 6pt;
+  }
+
+  /* ─────────── パッド行 (互換性のため残置) ───────────
+     v1.1.0 で強制パディングは廃止され、v1.3.0-flow-layout で完全に非推奨。
+     extractor からは emit されないため通常パイプラインでは使われない。
+     過去データや外部パイプラインが pad 行を含む場合に備えてスタイル定義のみ残す。 */
+  tr.row-pad { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-pad td {
+    background: #fff;
+    padding: 0.3pt 2pt;
+    font-size: 6pt;
+  }
+
+  /* 太字セル（is_bold=True） */
+  td.bold { font-weight: bold; }
+
+</style>
+</head>
+<body>
+
+<h1 class="title">下　請　代　金　内　訳　書</h1>
+
+<table class="header-info">
+  <tr>
+    <td class="lbl">工 事 名</td>
+    <td class="val koji-kenmei">長崎地区水産流通基盤整備工事（沖防波堤（改良）3工区）</td>
+    <td class="party-lbl">(元請負人)</td>
+    <td class="party-val">Factory・長崎西部特定建設工事共同企業体</td>
+    <td class="party-lbl">(下請負人)</td>
+    <td class="party-val">株式会社大村土木</td>
+  </tr>
+  <tr>
+    <td class="lbl">契約年月日</td>
+    <td class="val">令和8年1月28日</td>
+    <td class="party-lbl">(代表構成員)</td>
+    <td class="party-val">住所　長崎県長崎市多以良町1551番地93</td>
+    <td class="party-lbl"></td>
+    <td class="party-val">住所　長崎県大村市松原本町48番地2</td>
+  </tr>
+  <tr>
+    <td class="lbl">工　　期</td>
+    <td class="val">令和8年2月1日〜令和8年11月20日</td>
+    <td class="party-lbl"></td>
+    <td class="party-val">商号　株式会社Ｆａｃｔｏｒｙ</td>
+    <td class="party-lbl"></td>
+    <td class="party-val">商号　株式会社大村土木</td>
+  </tr>
+  <tr>
+    <td class="lbl"></td>
+    <td class="val"></td>
+    <td class="party-lbl"></td>
+    <td class="party-val">氏名　代表取締役社長　山本　清和</td>
+    <td class="party-lbl"></td>
+    <td class="party-val">氏名　代表取締役　川口　洋一</td>
+  </tr>
+</table>
+
+<table class="main-table">
+
+  <colgroup>
+    <col class="c-a"><col class="c-b"><col class="c-c"><col class="c-d">
+    <col class="c-e">
+    <col class="c-f"><col class="c-g"><col class="c-h">
+    <col class="c-i"><col class="c-j"><col class="c-k">
+    <col class="c-l"><col class="c-m"><col class="c-n">
+    <col class="c-o">
+  </colgroup>
+  <thead>
+    <tr>
+      <th rowspan="3">工種</th>
+      <th rowspan="3">種別</th>
+      <th rowspan="3">細別・規格</th>
+      <th rowspan="3" class="unit">単位</th>
+      <th rowspan="2">元請<br>契約</th>
+      <th colspan="9">下請契約</th>
+      <th rowspan="3">備考</th>
+    </tr>
+    <tr>
+      <th colspan="3">当初</th>
+      <th colspan="3">変更金額</th>
+      <th colspan="3">変更(増減)</th>
+    </tr>
+    <tr>
+      <th>数量</th>
+      <th>数量</th><th>単価</th><th>金額</th>
+      <th>数量</th><th>単価</th><th>金額</th>
+      <th>数量</th><th>単価</th><th>金額</th>
+    </tr>
+  </thead>
+
+  <tbody>
+
+
+      <tr class="row-item">
+        <td class="txt">土工</td>
+        <td class="txt">掘削工</td>
+        <td class="txt">水中掘削　軟岩</td>
+        <td class="unit">m3</td>
+          <td class="num">120.0</td>
+          <td class="num">120.0</td>
+          <td class="num">5,800</td>
+          <td class="num">696,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="row-item">
+        <td class="txt">土工</td>
+        <td class="txt">埋戻工</td>
+        <td class="txt">裏込材　割栗石</td>
+        <td class="unit">m3</td>
+          <td class="num">80.0</td>
+          <td class="num">80.0</td>
+          <td class="num">6,200</td>
+          <td class="num">496,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="row-item">
+        <td class="txt">基礎工</td>
+        <td class="txt">捨石工</td>
+        <td class="txt">捨石　100kg～200kg</td>
+        <td class="unit">t</td>
+          <td class="num">450.0</td>
+          <td class="num">450.0</td>
+          <td class="num">4,200</td>
+          <td class="num">1,890,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="row-item">
+        <td class="txt">被覆工</td>
+        <td class="txt">被覆ブロック</td>
+        <td class="txt">5t型　消波ブロック</td>
+        <td class="unit">個</td>
+          <td class="num">30.0</td>
+          <td class="num">30.0</td>
+          <td class="num">28,000</td>
+          <td class="num">840,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="row-item">
+        <td class="txt">附帯工</td>
+        <td class="txt">標識灯設置</td>
+        <td class="txt">LED航路標識灯</td>
+        <td class="unit">基</td>
+          <td class="num">2.0</td>
+          <td class="num">2.0</td>
+          <td class="num">185,000</td>
+          <td class="num">370,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">直接工事費計</td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">4,292,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">共通仮設費</td>
+        <td class="unit">式</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">　共通仮設費</td>
+        <td class="unit">式</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">純工事費計</td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">4,292,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">工事原価</td>
+        <td class="unit"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num">4,292,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">　一般管理費</td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">20,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">工事価格</td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">4,312,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">消費税相当額</td>
+        <td class="unit">％</td>
+          <td class="num">10.0</td>
+          <td class="num">10.0</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-subtotal">
+        <td colspan="3" class="label bold">下請金額</td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">4,312,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-spacer">
+<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>      </tr>
+
+
+      <tr class="row-note">
+        <td colspan="15">※下請金額に含まれる労務費及び法定福利費（事業者負担分）について</td>
+      </tr>
+
+
+      <tr class="row-footer-item">
+        <td class="txt bold">　労務費</td>
+        <td class="txt bold"></td>
+        <td class="txt bold"></td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">62,500</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="row-footer-item">
+        <td class="txt bold">　法定福利費</td>
+        <td class="txt bold"></td>
+        <td class="txt bold"></td>
+        <td class="unit">式</td>
+          <td class="num">1.0</td>
+          <td class="num">1.0</td>
+          <td class="num"></td>
+          <td class="num">10,000</td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num"></td>
+        <td class="biko"></td>
+      </tr>
+
+  </tbody>
+
+</table>
+
+</body>
+</html>

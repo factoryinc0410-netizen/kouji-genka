@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}ログイン - Factoryskills{% endblock %}
+
+{% block content_noauth %}
+<div class="login-container">
+    <div class="login-card card shadow">
+        <div class="card-body p-4">
+            <div class="text-center mb-4">
+                <i class="bi bi-gear-wide-connected login-icon"></i>
+                <h4 class="mt-2">Factoryskills</h4>
+                <p class="text-muted">ログインしてください</p>
+            </div>
+
+            {% if error %}
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ error }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endif %}
+
+            <form method="post" action="/login">
+                <div class="mb-3">
+                    <label for="username" class="form-label">
+                        <i class="bi bi-person me-1"></i>ユーザー名
+                    </label>
+                    <input type="text" class="form-control" id="username" name="username"
+                           required autofocus autocomplete="username">
+                </div>
+                <div class="mb-4">
+                    <label for="password" class="form-label">
+                        <i class="bi bi-lock me-1"></i>パスワード
+                    </label>
+                    <input type="password" class="form-control" id="password" name="password"
+                           required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-box-arrow-in-right me-1"></i>ログイン
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

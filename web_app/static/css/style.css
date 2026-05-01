@@ -1,0 +1,152 @@
+/* ── 共通レイアウト ──────────────────────────────────────── */
+body {
+    background-color: #f4f6f9;
+    font-family: 'Liberation Sans', 'IPAexGothic', sans-serif;
+}
+
+.main-content {
+    margin-top: 56px; /* navbar の高さ分 */
+    min-height: calc(100vh - 56px);
+}
+
+/* ── ログイン画面 ───────────────────────────────────────── */
+.login-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+}
+
+.login-card {
+    width: 100%;
+    max-width: 420px;
+    border-radius: 12px;
+}
+
+.login-icon {
+    font-size: 3rem;
+    color: #0d6efd;
+}
+
+/* ── ポータル: 部署セクション ──────────────────────────── */
+.department-header {
+    font-weight: 600;
+    color: #2c3e50;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #e9ecef;
+}
+
+/* ── ポータル: ツールカード ─────────────────────────────── */
+.tool-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.tool-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12) !important;
+}
+
+.tool-placeholder {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.tool-placeholder:hover {
+    transform: none;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+}
+
+.tool-icon-wrapper {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+}
+
+/* ── アップロードゾーン ─────────────────────────────────── */
+.border-dashed {
+    border-style: dashed !important;
+    border-color: #adb5bd !important;
+}
+
+.upload-zone {
+    background-color: #f8f9fa;
+    transition: background-color 0.2s ease;
+}
+
+.upload-zone.drag-over {
+    background-color: #e7f1ff;
+    border-color: #0d6efd !important;
+}
+
+/* ── アップロードゾーン（強化） ─────────────────────────── */
+.upload-zone {
+    cursor: pointer;
+    background-color: #f8f9fa;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.upload-zone:hover {
+    background-color: #eef3f8;
+}
+
+.upload-zone.drag-over {
+    background-color: #e7f1ff;
+    border-color: #0d6efd !important;
+}
+
+/* ── プログレス ────────────────────────────────────────── */
+.progress {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* ── スピナーアニメーション（処理中バッジ用） ──────────── */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+.spin {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
+/* ── ステータスバッジ ───────────────────────────────────── */
+.badge-pending   { background-color: #6c757d; }
+.badge-processing { background-color: #0d6efd; }
+.badge-completed { background-color: #198754; }
+.badge-error     { background-color: #dc3545; }
+
+/* ── 履歴テーブル ───────────────────────────────────────── */
+.table th {
+    font-weight: 600;
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+.table td {
+    vertical-align: middle;
+}
+
+/* ── アプリバージョン表示（画面右下に常時表示） ────────── */
+.app-version-badge {
+    position: fixed;
+    right: 8px;
+    bottom: 6px;
+    z-index: 1030;           /* Bootstrap navbar は 1030、ここは同値で前面に */
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-family: "Consolas", "Menlo", monospace;
+    color: #6c757d;
+    background-color: rgba(255, 255, 255, 0.85);
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    pointer-events: none;    /* 下のコンテンツの操作を邪魔しない */
+    user-select: none;
+    opacity: 0.75;
+}

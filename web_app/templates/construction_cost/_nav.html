@@ -1,0 +1,40 @@
+{# 工事日報集計 共通タブナビゲーション #}
+{# 使い方: {% set active_tab = "dashboard" %} {% include "construction_cost/_nav.html" %} #}
+<ul class="nav nav-tabs">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}"
+           href="/construction-cost/">
+            <i class="bi bi-speedometer2 me-1"></i>ダッシュボード
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'sites' %}active{% endif %}"
+           href="/construction-cost/sites">
+            <i class="bi bi-building me-1"></i>現場マスタ管理
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'groups' %}active{% endif %}"
+           href="/construction-cost/groups">
+            <i class="bi bi-diagram-3 me-1"></i>グループ
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'workers' %}active{% endif %}"
+           href="/construction-cost/workers">
+            <i class="bi bi-people me-1"></i>作業員単価
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'aggregate' %}active{% endif %}"
+           href="/construction-cost/aggregate">
+            <i class="bi bi-calculator me-1"></i>集計処理
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'history' %}active{% endif %}"
+           href="/construction-cost/history">
+            <i class="bi bi-clock-history me-1"></i>履歴
+        </a>
+    </li>
+</ul>

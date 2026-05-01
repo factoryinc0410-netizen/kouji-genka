@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}工事日報集計{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><i class="bi bi-speedometer2 me-2"></i>工事日報集計</h3>
+    <span class="text-muted small"><i class="bi bi-calendar-date me-1"></i>{{ today_label }}</span>
+</div>
+
+{% set active_tab = "dashboard" %}
+{% include "construction_cost/_nav.html" %}
+
+<div class="mt-4">
+    <!-- 概要カード -->
+    <div class="row mb-4">
+        {% set ns = namespace(total_budget=0, total_paid=0, total_remaining=0, active_count=0) %}
+        {% for r in rows %}
+            {% if r.status == '進行中' %}
+                {% set ns.total_budget = ns.total_budget + r.budget %}
+                {% set ns.total_paid = ns.total_paid + r.total_paid %}
+                {% set ns.total_remaining = ns.total_remaining + r.remaining %}
+                {% set ns.active_count = ns.active_count + 1 %}
+            {% endif %}
+        {% endfor %}
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <div class="text-muted small">進行中の現場</div>
+                    <div class="fs-3 fw-bold text-primary">{{ ns.active_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <div class="text-muted small">予算合計</div>
+                    <div class="fs-5 fw-bold text-info">{{ "{:,.0f}".format(ns.total_budget) }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <div class="text-muted small">累計支払合計</div>
+                    <div class="fs-5 fw-bold text-warning">{{ "{:,.0f}".format(ns.total_paid) }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card {% if ns.total_remaining < 0 %}border-danger{% else %}border-success{% endif %}">
+                <div class="card-body text-center">
+                    <div class="text-muted small">残金額合計</div>
+                    <div class="fs-5 fw-bold {% if ns.total_remaining < 0 %}text-danger{% else %}text-success{% endif %}">
+                        {{ "{:,.0f}".format(ns.total_remaining) }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 現場別予算・原価消化一覧 -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-table me-1"></i>現場別 予算・原価消化状況</span>
+            <div class="d-flex align-items-center gap-1 flex-wrap">
+                <!-- 月ナビゲーション -->
+                <a href="?month={{ prev_month }}" class="btn btn-outline-secondary btn-sm" title="前月">
+                    <i class="bi bi-chevron-left"></i>
+                </a>
+                <span class="px-2 fw-bold small">{{ target_month_label }}</span>
+                {% if is_latest_month %}
+                <button class="btn btn-outline-secondary btn-sm me-2" disabled title="翌月（最新月のため進めません）">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+                {% else %}
+                <a href="?month={{ next_month }}" class="btn btn-outline-secondary btn-sm me-2" title="翌月">
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+                {% endif %}
+                <!-- 操作ボタン群 -->
+                <button id="btnToggleAll" class="btn btn-outline-secondary btn-sm" onclick="toggleAllGroups()">
+                    <i class="bi bi-arrows-expand me-1"></i><span>すべて展開</span>
+                </button>
+                <a href="/construction-cost/dashboard/export?month={{ target_month }}" class="btn btn-success btn-sm">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Excel出力
+                </a>
+                <a href="/construction-cost/monthly/sites" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-calendar3 me-1"></i>現場別月別
+                </a>
+                <a href="/construction-cost/monthly/workers" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-person-lines-fill me-1"></i>作業員別月別
+                </a>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th>現場名</th>
+                            <th class="text-end">予算額</th>
+                            <th class="text-end">前回までの支払</th>
+                            <th class="text-end">当月支払</th>
+                            <th class="text-end">累計支払</th>
+                            <th class="text-end">残金額</th>
+                            <th class="text-center">ステータス</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in rows %}
+                        {% set site_idx = loop.index %}
+                        <!-- 親行（現場合計） -->
+                        <tr class="site-parent {% if r.remaining < 0 %}table-danger{% endif %}"
+                            {% if r.groups|length > 0 %}
+                            style="cursor: pointer;"
+                            onclick="toggleGroup('grp-{{ site_idx }}')"
+                            {% endif %}>
+                            <td class="text-center">
+                                {% if r.groups|length > 0 %}
+                                <i class="bi bi-chevron-right toggle-icon" id="icon-grp-{{ site_idx }}"></i>
+                                {% endif %}
+                            </td>
+                            <td class="fw-bold">
+                                <span class="text-muted fw-normal me-1 small">[{{ r.site_code }}]</span>{{ r.site_name }}
+                            </td>
+                            <td class="text-end">{{ "{:,.0f}".format(r.budget) }}</td>
+                            <td class="text-end">{{ "{:,.0f}".format(r.prev_paid) }}</td>
+                            <td class="text-end fw-bold">
+                                {% if r.current_paid > 0 %}
+                                    {{ "{:,.0f}".format(r.current_paid) }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ "{:,.0f}".format(r.total_paid) }}</td>
+                            <td class="text-end {% if r.remaining < 0 %}text-danger fw-bold{% endif %}">
+                                {{ "{:,.0f}".format(r.remaining) }}
+                            </td>
+                            <td class="text-center">
+                                {% if r.status == '進行中' %}
+                                <span class="badge bg-primary">進行中</span>
+                                {% else %}
+                                <span class="badge bg-secondary">完了</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <!-- 子行（グループ別内訳） -->
+                        {% for g in r.groups %}
+                        <tr class="group-detail grp-{{ site_idx }}" style="display: none;">
+                            <td></td>
+                            <td class="ps-4 text-muted">
+                                <i class="bi bi-dash me-1"></i>{{ g.group_name }}
+                            </td>
+                            <td class="text-end">
+                                {% if g.budget %}{{ "{:,.0f}".format(g.budget) }}{% else %}<span class="text-muted fst-italic" style="font-size:0.8em;">未設定</span>{% endif %}
+                            </td>
+                            <td class="text-end">{{ "{:,.0f}".format(g.prev_paid) }}</td>
+                            <td class="text-end">
+                                {% if g.current_paid > 0 %}
+                                    {{ "{:,.0f}".format(g.current_paid) }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ "{:,.0f}".format(g.total_paid) }}</td>
+                            <td class="text-end {% if g.remaining is not none and g.remaining < 0 %}text-danger fw-bold{% endif %}">
+                                {% if g.remaining is not none %}{{ "{:,.0f}".format(g.remaining) }}{% else %}<span class="text-muted fst-italic" style="font-size:0.8em;">未設定</span>{% endif %}
+                            </td>
+                            <td></td>
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+
+                        {% if rows|length == 0 %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">
+                                現場が登録されていません。<a href="/construction-cost/sites">現場マスタ管理</a>から追加してください。
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                    {% if rows|length > 0 %}
+                    <tfoot class="table-light">
+                        <tr class="fw-bold">
+                            <td></td>
+                            <td>合計（進行中のみ）</td>
+                            <td class="text-end">{{ "{:,.0f}".format(ns.total_budget) }}</td>
+                            <td class="text-end">-</td>
+                            <td class="text-end">-</td>
+                            <td class="text-end">{{ "{:,.0f}".format(ns.total_paid) }}</td>
+                            <td class="text-end {% if ns.total_remaining < 0 %}text-danger{% endif %}">
+                                {{ "{:,.0f}".format(ns.total_remaining) }}
+                            </td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.site-parent:hover {
+    background-color: rgba(0,0,0,0.04) !important;
+}
+.group-detail {
+    background-color: #f8f9fa;
+}
+.group-detail td {
+    font-size: 0.9em;
+}
+.toggle-icon {
+    transition: transform 0.2s ease;
+    font-size: 0.8em;
+}
+.toggle-icon.expanded {
+    transform: rotate(90deg);
+}
+</style>
+
+<script>
+function toggleGroup(cls) {
+    var rows = document.querySelectorAll('.' + cls);
+    var icon = document.getElementById('icon-' + cls);
+    var isHidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function(r) {
+        r.style.display = isHidden ? '' : 'none';
+    });
+    if (icon) {
+        icon.classList.toggle('expanded', isHidden);
+    }
+}
+
+function toggleAllGroups() {
+    var allDetails = document.querySelectorAll('.group-detail');
+    if (allDetails.length === 0) return;
+
+    var anyHidden = false;
+    allDetails.forEach(function(r) {
+        if (r.style.display === 'none') anyHidden = true;
+    });
+
+    allDetails.forEach(function(r) {
+        r.style.display = anyHidden ? '' : 'none';
+    });
+
+    document.querySelectorAll('.toggle-icon').forEach(function(icon) {
+        icon.classList.toggle('expanded', anyHidden);
+    });
+
+    var btn = document.getElementById('btnToggleAll');
+    var span = btn.querySelector('span');
+    var iconEl = btn.querySelector('i');
+    if (anyHidden) {
+        span.textContent = 'すべて折りたたむ';
+        iconEl.className = 'bi bi-arrows-collapse me-1';
+    } else {
+        span.textContent = 'すべて展開';
+        iconEl.className = 'bi bi-arrows-expand me-1';
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>契約条件書</title>
+<style>
+  /* ─────────── @page (A4 縦・Excel と同一マージン) ─────────── */
+  @page {
+    size: A4 portrait;
+    margin: 12mm 15mm 8mm 15mm;
+  }
+
+  /* ─────────── 基本タイポ (Excel ＭＳ Ｐゴシック 準拠) ─────────── */
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: "MS PGothic", "MS Gothic", "Yu Gothic", "Meiryo",
+                 "Hiragino Kaku Gothic ProN", "IPAGothic", sans-serif;
+    font-size: 9pt;
+    color: #000;
+    line-height: 1.15;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ─────────── タイトル ─────────── */
+  h1.title {
+    text-align: center;
+    font-size: 16pt;
+    font-weight: bold;
+    letter-spacing: 0.5em;
+    margin: 0 0 1mm 0;
+    padding-left: 0.5em;
+  }
+
+  /* ─────────── ヘッダ表（工事名 / 現場代理人） ─────────── */
+  table.header-info {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0;
+    table-layout: fixed;
+  }
+  table.header-info td {
+    padding: 1px 2px;
+    vertical-align: middle;
+    border: none;
+  }
+  table.header-info .lbl {
+    width: 14%;
+    font-weight: normal;
+    letter-spacing: 0.3em;
+    white-space: nowrap;
+  }
+  table.header-info .val { width: 36%; }
+
+  /* ─────────── メインテーブル (Excelシャープ罫線) ─────────── */
+  table.main-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: 1px solid #000;
+    margin-bottom: 1mm;
+  }
+  table.main-table th,
+  table.main-table td {
+    border: 1px solid #000;     /* ★Excelシャープ黒 1px で全セル描画 */
+    padding: 1px 2px;
+    vertical-align: middle;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    line-height: 1.15;
+  }
+  /* 列幅 (mm) */
+  col.c-cat   { width: 26mm; }  /* A: 大分類 */
+  col.c-gap   { width:  3mm; }  /* B: 余白 */
+  col.c-label { width: 80mm; }  /* C+D: 明細ラベル */
+  col.c-moto  { width: 13mm; }  /* E: 元方 ✓ */
+  col.c-shita { width: 13mm; }  /* F: 下請 ✓ */
+  col.c-biko  { width: 45mm; }  /* G: 備考 */
+
+  /* 列ヘッダ — Excel 同様に背景なし */
+  table.main-table thead th {
+    background: #fff;
+    font-weight: normal;
+    text-align: center;
+    vertical-align: middle;
+    font-size: 9pt;
+    padding: 1px 2px;
+    letter-spacing: 0.2em;
+  }
+
+  /* 左上コーナーセル — 斜線（top-left → bottom-right）＋「費用負担項目」左上配置 */
+  table.main-table thead th.corner {
+    text-align: left;
+    vertical-align: top;
+    padding: 2px 3px;
+    font-weight: normal;
+    letter-spacing: 0.2em;
+    /* SVG で top-left → bottom-right の斜線を描画（Excel のセル対角線相当） */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none' viewBox='0 0 100 100'><line x1='0' y1='0' x2='100' y2='100' stroke='black' stroke-width='0.6' vector-effect='non-scaling-stroke'/></svg>");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+  }
+
+  /* データ行 */
+  td.cat    {
+    font-weight: normal;
+    vertical-align: middle;
+    text-align: left;
+    padding: 1px 2px 1px 2px;
+  }
+  td.gap    { background: transparent; }
+  td.label  { font-size: 9pt; text-align: left; padding-left: 3px; }
+  td.check  {
+    text-align: center;
+    font-family: "MS PGothic", "Segoe UI Symbol", "Meiryo", sans-serif;
+    font-size: 10pt;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0;
+  }
+  td.biko   { font-size: 9pt; text-align: left; padding-left: 3px; }
+
+  /* A 列と B(余白)列を視覚的に結合: 境界の罫線を消す */
+  td.gap { border-left: none; }
+  td.cat { border-right: none; }
+
+  /* セクションをまたいで改ページしないための保険 */
+  tr.item-row { page-break-inside: avoid; }
+
+  /* ─────────── 注記行 ─────────── */
+  p.note {
+    font-size: 9pt;
+    text-align: right;
+    margin: 1mm 0 1mm 0;
+  }
+
+  /* ─────────── サインブロック（Excelシャープ罫線・テーブル風） ─────────── */
+  table.sign-block {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: 1px solid #000;
+    page-break-inside: avoid;
+  }
+  table.sign-block th,
+  table.sign-block td {
+    border: 1px solid #000;
+    padding: 1px 3px;
+    vertical-align: middle;
+    font-size: 9pt;
+    line-height: 1.15;
+  }
+  table.sign-block col.sb-lbl { width: 22mm; }
+  table.sign-block col.sb-val { width: 68mm; }
+  table.sign-block .lbl {
+    font-weight: normal;
+    letter-spacing: 0.3em;
+    white-space: nowrap;
+  }
+  table.sign-block .group-name {
+    font-weight: normal;
+    padding: 1px 3px;
+  }
+  table.sign-block .block-sep {
+    border-left: 1.5px solid #000;
+  }
+
+</style>
+</head>
+<body>
+
+<h1 class="title">契 約 条 件 書</h1>
+
+<table class="header-info">
+  <tr>
+    <td class="lbl">工事名：</td>
+    <td class="val">長崎地区水産流通基盤整備工事（沖防波堤（改良）3工区）</td>
+    <td class="lbl">現場代理人</td>
+    <td class="val">出口　勇人</td>
+  </tr>
+</table>
+
+<table class="main-table">
+  <colgroup>
+    <col class="c-cat">
+    <col class="c-gap">
+    <col class="c-label">
+    <col class="c-moto">
+    <col class="c-shita">
+    <col class="c-biko">
+  </colgroup>
+
+  <thead>
+    <tr>
+      <th class="corner" colspan="2" rowspan="2">費用負担項目</th>
+      <th rowspan="2">区　分</th>
+      <th colspan="2">費用負担会社</th>
+      <th rowspan="2">備　考</th>
+    </tr>
+    <tr>
+      <th>元方</th>
+      <th>下請</th>
+    </tr>
+  </thead>
+
+  <tbody>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="3">1.測量関係費</td>
+        <td class="gap" rowspan="3"></td>
+        <td class="label">基本測量</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">境界測量</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">現場・丁張測量(材工共）</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="5">2.安全関係費</td>
+        <td class="gap" rowspan="5"></td>
+        <td class="label">工事看板（材料）</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">標示板・ﾊﾞﾘｹｰﾄﾞ類(材工共)</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">仮設電気，電力料金</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">交通整理員（ガードマン）</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">足場設置費</td>
+        <td class="check"></td>
+        <td class="check">✓</td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="8">3.現場事務所、仮設電力費</td>
+        <td class="gap" rowspan="8"></td>
+        <td class="label">地代（現場事務所）</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">地代（資材置場等）</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">敷地造成費･復旧費</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">現場事務所設置</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">仮設ハウス備品</td>
+        <td class="check">✓</td>
+        <td class="check">✓</td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">トイレ</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">電話・電気・水道引込撤去</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">電話・電気・水道使用料</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="7">4.管理費用</td>
+        <td class="gap" rowspan="7"></td>
+        <td class="label">出来形管理測定</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">出来形管理書類作成</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">品質管理測定</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">品質管理書類作成</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">写真撮影</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">写真管理（データ整理）</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">竣工検査書類作成</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="2">5.現場環境改善費用</td>
+        <td class="gap" rowspan="2"></td>
+        <td class="label">材料費</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">設置撤去費</td>
+        <td class="check">✓</td>
+        <td class="check">✓</td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="7">6.その他費用</td>
+        <td class="gap" rowspan="7"></td>
+        <td class="label">諸官庁申請書類作成</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">諸官庁申請費用</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">材料検査費用</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">試験施工費用</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">地下埋設・地上施設調査費</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">地元挨拶，説明会費用</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">会計検査費用</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="3">7.別途協議事項</td>
+        <td class="gap" rowspan="3"></td>
+        <td class="label">近隣対策，補償費</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">産業廃棄物処理費</td>
+        <td class="check">✓</td>
+        <td class="check">✓</td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">公害対策費</td>
+        <td class="check"></td>
+        <td class="check">✓</td>
+        <td class="biko"></td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="2">8.その他</td>
+        <td class="gap" rowspan="2"></td>
+        <td class="label">出来形及び品質管理基準</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko">規格値の50％</td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">安全教育訓練への参加</td>
+        <td class="check">✓</td>
+        <td class="check">✓</td>
+        <td class="biko">毎月4時間</td>
+      </tr>
+
+      <tr class="item-row">
+        <td class="cat" rowspan="6">9.適切な下請契約等</td>
+        <td class="gap" rowspan="6"></td>
+        <td class="label">下請次数を2次までに制限する</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">下請契約の金額の合意形成</td>
+        <td class="check"></td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">　労務費及び法定福利費を明示した見積書提出</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">　見積書を尊重し下請け契約を締結する</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">　建設キャリアアップシステムの事業登録</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko">契約工期内に事業者登録</td>
+      </tr>
+      <tr class="item-row">
+        <td class="label">　その他</td>
+        <td class="check"></td>
+        <td class="check"></td>
+        <td class="biko"></td>
+      </tr>
+
+
+      <tr class="item-row">
+        <td class="cat" colspan="3">10.4週8休等の実施</td>
+        <td class="check">✓</td>
+        <td class="check"></td>
+        <td class="biko">４週８休</td>
+      </tr>
+
+  </tbody>
+</table>
+
+<p class="note">※以上の条件で契約致します。(ﾚ点の部分）</p>
+
+<table class="sign-block">
+  <colgroup>
+    <col class="sb-lbl">
+    <col class="sb-val">
+    <col class="sb-lbl">
+    <col class="sb-val">
+  </colgroup>
+  <tr>
+    <td class="group-name" colspan="2">Factory・長崎西部特定建設工事共同企業体</td>
+    <td class="group-name block-sep" colspan="2">（下請負人）</td>
+  </tr>
+  <tr>
+    <td class="lbl" colspan="2">（代表構成員）</td>
+    <td class="block-sep" colspan="2"></td>
+  </tr>
+  <tr>
+    <td class="lbl">住　　所</td>
+    <td>長崎県長崎市多以良町1551番地93</td>
+    <td class="lbl block-sep">商号又は名称</td>
+    <td>西海建設工業株式会社</td>
+  </tr>
+  <tr>
+    <td class="lbl">商号又は名称</td>
+    <td>株式会社Ｆａｃｔｏｒｙ</td>
+    <td class="lbl block-sep">住　　所</td>
+    <td>長崎県西海市大島町1822番地</td>
+  </tr>
+  <tr>
+    <td class="lbl">氏　　名</td>
+    <td>代表取締役社長　山本　清和</td>
+    <td class="lbl block-sep">氏　　名</td>
+    <td>代表取締役　川村　俊介</td>
+  </tr>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,410 @@
+{# 内訳書 (下請代金内訳書) — Jinja2 テンプレート (A4 横)
+   --------------------------------------------------------
+   入力: NairakuData (nairaku_models.py)
+     data.header                : NairakuHeaderInfo
+       .koji_kenmei, .contract_date (和暦), .kouki
+       .motouke_group_name          — 共同企業体名 (F3:I3)
+       .motouke_{address,company,name}  — 代表構成員の住所/商号/氏名 (G4/G5/G6)
+       .shitauke_{address,company,name} — 下請負人の住所/商号/氏名 (M4/M5/M6)
+     data.rows                  : list[NairakuRow]
+       .row_type                : "category" | "item" | "subtotal" | "note"
+                                  | "footer_item" | "spacer" | "pad"
+       .indent                  : A列先頭空白段数（参考値。koji_shu に反映済）
+       .is_bold                 : 太字フラグ
+       .to_table_row()          → 15 要素 [A..O]（常に 15 列固定）
+     data.has_henkou            : bool — 参考情報（列描画には影響しない）
+
+   列構造 (常に 15 列, Excel の A..O 列に 1:1 対応):
+     A=工種 B=種別 C=細別・規格 D=単位 E=元請契約数量
+     F=当初数量 G=当初単価 H=当初金額
+     I=変更数量 J=変更単価 K=変更金額
+     L=増減数量 M=増減単価 N=増減金額
+     O=備考
+
+   改ページ動作:
+     - <thead> 内の全ヘッダ行が 2 ページ目以降の先頭に自動で繰り返される
+     - <tr.row-*> には break-inside: avoid — 行の途中でページ切断を禁止
+     - Page 1 のみに表示されるヘッダ情報 (工事名/元請/下請) は <thead> の外側に配置
+#}
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>下請代金内訳書</title>
+<style>
+  /* ─────────── @page (A4 横) ───────────
+     動的行数レイアウト (v1.3.0-flow-layout):
+       行数は Excel 原本のまま可変。1 ページに収まらない場合は
+       CSS の静的フローで自然にページ送りされる。
+       下請金額・注記行・労務費/法定福利費はフッター領域として
+       ページ下端に固定せず、明細テーブルの直後に流れるように配置する。 */
+  @page {
+    size: A4 landscape;
+    margin: 8mm 12mm 8mm 12mm;
+    /* 有効幅: 297 - 24 = 273mm  有効高: 210 - 16 = 194mm */
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    /* font-family チェーン: Windows → macOS → Linux の順で日本語明朝フォントを探索する。
+       Linux (さくらVPS等) では Noto Serif CJK JP / IPAMincho / IPAex Mincho を使用する想定。
+         Debian/Ubuntu: `apt install fonts-noto-cjk fonts-ipafont fonts-ipaexfont`
+       Windows/macOS の既存挙動は変えない（先頭優先・OS 上にあるものから採用される）。 */
+    font-family: "MS Mincho", "Yu Mincho", "Hiragino Mincho ProN",
+                 "Noto Serif CJK JP", "IPAexMincho", "IPAMincho", serif;
+    font-size: 7pt;
+    color: #000;
+    line-height: 1.1;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ─────────── タイトル ─────────── */
+  h1.title {
+    text-align: center;
+    font-size: 12pt;
+    font-weight: bold;
+    letter-spacing: 0.4em;
+    padding-left: 0.4em;
+    margin: 0 0 1.5mm 0;
+    line-height: 1.1;
+  }
+
+  /* ─────────── 1ページ目ヘッダー（15列グリッド対応） ─────────── */
+  .header-info {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    margin-bottom: 0;
+  }
+  .header-info td {
+    padding: 0.5mm 1mm;
+    font-size: 7.5pt;
+    height: 4mm;
+    vertical-align: middle;
+    border: none !important;
+  }
+  .h-lbl { font-weight: bold; white-space: nowrap; }
+  .h-val { border-bottom: 0.5pt solid black !important; }
+  .txt-right { text-align: right; font-size: 6.5pt; }
+    
+
+  /* ─────────── メインテーブル ───────────
+     行高は ~2.5mm 目標に調整（font-size 6pt + padding 0.3pt + line-height 1.05 → 行高 ≈ 2.4mm）。
+     行数は Excel 原本のまま可変で、固定パディングなし（v1.3.0-flow-layout）。
+     <tbody> は通常フロー（Static Flow）で、position: absolute / fixed などは使わない。
+     下請金額以降のフッター領域もこの同じ <tbody> に連続して配置され、
+     ページ下端への固定は行わない。 */
+  table.main-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: 0.9pt solid #000;
+    font-size: 6pt;
+    /* 中身が空の <td> でも罫線を描画する（Firefox/Chromium 両対応） */
+    empty-cells: show;
+  }
+  table.main-table th,
+  table.main-table td {
+    border: 0.5pt solid #000;   /* 全セル罫線 黒 0.5pt */
+    padding: 0.3pt 2pt;
+    vertical-align: middle;
+    overflow: hidden;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    line-height: 1.05;
+    /* 空セルでセルが潰れないよう、最低でも 1 行分の高さを確保 */
+    min-height: 1em;
+  }
+
+  /* 単位列 (D) は全行タイプで中央揃え */
+  table.main-table td.unit,
+  table.main-table th.unit {
+    text-align: center;
+  }
+  /* 数値列 (E..N) は右寄せ＋等幅数字 */
+  table.main-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  /* テキスト列 (A/B/C) は左寄せ */
+  table.main-table td.txt {
+    text-align: left;
+  }
+
+  /* ─────────── thead (自動繰り返し) ─────────── */
+  table.main-table thead th {
+    background: #ececec;
+    font-weight: bold;
+    text-align: center;
+    font-size: 6.5pt;
+    padding: 0.5mm 1mm;
+    line-height: 1.1;
+  }
+  /* 2 ページ目以降も背景色が失われないよう -webkit-print-color-adjust を継承 */
+
+  /* ─────────── 列幅 (15 列固定, 合計 ~273mm) ─────────── */
+  col.c-a    { width: 32mm; }  /* A: 工種 */
+  col.c-b    { width: 32mm; }  /* B: 種別 */
+  col.c-c    { width: 38mm; }  /* C: 細別・規格 */
+  col.c-d    { width:  8mm; }  /* D: 単位 */
+  col.c-e    { width: 13mm; }  /* E: 元請契約 数量 */
+  col.c-f    { width: 13mm; }  /* F: 当初 数量 */
+  col.c-g    { width: 14mm; }  /* G: 当初 単価 */
+  col.c-h    { width: 19mm; }  /* H: 当初 金額 */
+  col.c-i    { width: 13mm; }  /* I: 変更 数量 */
+  col.c-j    { width: 14mm; }  /* J: 変更 単価 */
+  col.c-k    { width: 19mm; }  /* K: 変更 金額 */
+  col.c-l    { width: 13mm; }  /* L: 増減 数量 */
+  col.c-m    { width: 14mm; }  /* M: 増減 単価 */
+  col.c-n    { width: 19mm; }  /* N: 増減 金額 */
+  col.c-o    { width: 12mm; }  /* O: 備考 */
+
+  /* ─────────── 行タイプ別スタイル ─────────── */
+
+  /* 明細行 */
+  tr.row-item { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-item td.biko { font-size: 5.5pt; }
+
+  /* カテゴリ行（工種大分類） */
+  tr.row-category {
+    break-inside: avoid; page-break-inside: avoid;
+    break-after: avoid;  page-break-after: avoid;  /* 配下の明細行と離さない */
+  }
+  tr.row-category td {
+    background: #f3f3f3;
+    font-weight: bold;
+    font-size: 6.5pt;
+    padding: 0.3pt 2mm;
+  }
+
+  /* 合計行 */
+  tr.row-subtotal { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-subtotal td {
+    background: #f7f7f7;
+    border: 0.5pt solid #000;
+    border-top: 1pt solid #000;     /* 合計行上辺の太線 */
+    font-weight: bold;
+  }
+  tr.row-subtotal td.label { text-align: left; padding-left: 2mm; }
+
+  /* 値付きフッター行（労務費 / 法定福利費 等）
+     主表の item と同じ 15 列レイアウト。A 列だけ若干左寄せで目立たせる。 */
+  tr.row-footer-item { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-footer-item td {
+    background: #fcfcfc;
+    border: 0.5pt solid #000;
+    border-top: 0.4pt dashed #888;
+  }
+  tr.row-footer-item td.biko { font-size: 5.5pt; }
+
+  /* 純粋な注記行（※下請金額… の前置き文）
+     colspan=15 で全幅描画。数値は入らない。 */
+  tr.row-note { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-note td {
+    font-size: 5.5pt;
+    border-top: 0.3pt dotted #888;
+    text-align: left;
+    padding: 0.2mm 2mm;
+    background: #fafafa;
+    line-height: 1.05;
+  }
+
+  /* Excel 意図的な空白行（item と同じ罫線を保持・中身なし） */
+  /* 以前は罫線を薄く（#eaeaea / #fff）していたが、表の連続性が崩れて
+     見えるという指摘を受け、item 行と同じ黒 0.5pt に統一した。 */
+  tr.row-spacer { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-spacer td {
+    background: #fff;
+    padding: 0.3pt 2pt;
+    font-size: 6pt;
+  }
+
+  /* ─────────── パッド行 (互換性のため残置) ───────────
+     v1.1.0 で強制パディングは廃止され、v1.3.0-flow-layout で完全に非推奨。
+     extractor からは emit されないため通常パイプラインでは使われない。
+     過去データや外部パイプラインが pad 行を含む場合に備えてスタイル定義のみ残す。 */
+  tr.row-pad { break-inside: avoid; page-break-inside: avoid; }
+  tr.row-pad td {
+    background: #fff;
+    padding: 0.3pt 2pt;
+    font-size: 6pt;
+  }
+
+  /* 太字セル（is_bold=True） */
+  td.bold { font-weight: bold; }
+
+</style>
+</head>
+<body>
+
+<h1 class="title">下　請　代　金　内　訳　書</h1>
+
+<div style="height: 10px;"></div>
+
+{# ──────── ページ 1 限定のヘッダ情報（15列グリッドでExcel再現） ──────── #}
+<table class="header-info">
+  <colgroup>
+    <col style="width: 6%;"><col style="width: 22%;"><col style="width: 5%;"><col style="width: 3%;">
+    <col style="width: 9%;"><col style="width: 7%;"><col style="width: 4%;"><col style="width: 4%;">
+    <col style="width: 4%;"><col style="width: 5.5%;"><col style="width: 9%;"><col style="width: 7%;">
+    <col style="width: 8%;"><col style="width: 7.5%;"><col style="width: 8%;">
+  </colgroup>
+  <tbody>
+    <tr>
+      <td class="h-lbl">工 事 名</td>
+      
+      {% set k_len = data.header.koji_kenmei|length %}
+      <td colspan="3" class="h-val" style="padding: 0 2px; vertical-align: middle;">
+        <svg viewBox="0 0 300 20" preserveAspectRatio="xMinYMid meet" style="width: 100%; height: 1.5em; vertical-align: middle;">
+          <text x="2.5" y="15" font-size="12" font-family="'MS Mincho', 'ＭＳ 明朝', 'Noto Serif CJK JP', 'IPAexMincho', 'IPAMincho', serif"
+            {% if k_len > 30 %} textLength="370" lengthAdjust="spacingAndGlyphs" {% endif %}>
+            {{ data.header.koji_kenmei|e }}
+          </text>
+        </svg>
+      </td>
+      
+      <td class="txt-right">{% if data.header.motouke_group_name %}（元請負人）{% endif %}</td>
+      <td colspan="10" class="h-val">{{ data.header.motouke_group_name|e }}</td>
+    </tr>
+    <tr>
+      <td class="h-lbl">契約年月日</td>
+      <td colspan="3" class="h-val">{{ data.header.contract_date|e }}</td>
+      
+      <td class="txt-right">
+        {% if data.header.motouke_group_name %}（代表構成員）
+        {% else %}（元請負人）
+        {% endif %}
+      </td>
+      
+      <td class="h-lbl">住　　所</td>
+      <td colspan="4" class="h-val">{{ data.header.motouke_address|e }}</td>
+      <td class="txt-right">（下請負人）</td>
+      <td class="h-lbl">住　　所</td>
+      <td colspan="3" class="h-val">{{ data.header.shitauke_address|e }}</td>
+    </tr>
+    <tr>
+      <td class="h-lbl">工　　期</td>
+      <td colspan="4" class="h-val">{{ data.header.kouki|e }}</td>
+      <td class="h-lbl">商号又は名称</td>
+      <td colspan="4" class="h-val">{{ data.header.motouke_company|e }}</td>
+      <td></td>
+      <td class="h-lbl">商号又は名称</td>
+      <td colspan="3" class="h-val">{{ data.header.shitauke_company|e }}</td>
+    </tr>
+    <tr>
+      <td colspan="5"></td>
+      <td class="h-lbl">氏　　名</td>
+      <td colspan="4" class="h-val">{{ data.header.motouke_name|e }}</td>
+      <td></td>
+      <td class="h-lbl">氏　　名</td>
+      <td colspan="3" class="h-val">{{ data.header.shitauke_name|e }}</td>
+    </tr>
+  </tbody>
+</table>
+
+
+{# ──────── メインテーブル (15 列固定) ──────── #}
+<table class="main-table">
+
+  <colgroup>
+    <col class="c-a"><col class="c-b"><col class="c-c"><col class="c-d">
+    <col class="c-e">
+    <col class="c-f"><col class="c-g"><col class="c-h">
+    <col class="c-i"><col class="c-j"><col class="c-k">
+    <col class="c-l"><col class="c-m"><col class="c-n">
+    <col class="c-o">
+  </colgroup>
+  <thead>
+    <tr>
+      <th rowspan="3">工種</th>
+      <th rowspan="3">種別</th>
+      <th rowspan="3">細別・規格</th>
+      <th rowspan="3" class="unit">単位</th>
+      <th rowspan="2">元請<br>契約</th>
+      <th colspan="9">下請契約</th>
+      <th rowspan="3">備考</th>
+    </tr>
+    <tr>
+      <th colspan="3">当初</th>
+      <th colspan="3">変更金額</th>
+      <th colspan="3">変更(増減)</th>
+    </tr>
+    <tr>
+      <th>数量</th>
+      <th>数量</th><th>単価</th><th>金額</th>
+      <th>数量</th><th>単価</th><th>金額</th>
+      <th>数量</th><th>単価</th><th>金額</th>
+    </tr>
+  </thead>
+
+  <tbody>
+  {# 列インデックス参考 (0-indexed, Excel A..O 列に 1:1 対応):
+     0=A(工種) 1=B(種別) 2=C(細別) 3=D(単位) 4=E(元請数量)
+     5=F(当初数量) 6=G(当初単価) 7=H(当初金額)
+     8=I(変更数量) 9=J(変更単価) 10=K(変更金額)
+     11=L(増減数量) 12=M(増減単価) 13=N(増減金額) 14=O(備考)
+
+     【v2.2.0-excel-merge-fidelity】
+     <td> の colspan は NairakuRow.col_spans （Excel の merged_cells
+     から抽出された結合情報）に 100% 忠実に従う。テンプレート側で
+     colspan を推測する処理は撤廃し、row.visible_cells() が返す
+     {col, value, span} をそのまま描画する。
+     結合で隠れるセル (col_spans[i]==0) は visible_cells() 側で
+     フィルタされるため、ここでは意識しない。
+     値が空文字/None の場合は &nbsp; を出力して PDF での罫線消失を防ぐ。
+  #}
+
+  {# セルの CSS クラスを列位置と row_type から決定するマクロ。
+     - col 0..2 : テキスト列（subtotal のみ .label、他は .txt）
+     - col 3    : 単位列 (.unit 中央揃え)
+     - col 14   : 備考列 (.biko 小フォント)
+     - それ以外 : 数値列 (.num 右寄せ)
+     note / spacer / pad 行はクラス指定なし（行全体のスタイルを継承）。 #}
+  {% macro cell_css(col, row_type, is_bold) -%}
+    {%- set bold_suffix = ' bold' if is_bold else '' -%}
+    {%- if row_type in ('note', 'spacer', 'pad') -%}
+    {%- elif col <= 2 -%}
+      {%- if row_type == 'subtotal' -%}label{{ bold_suffix }}
+      {%- else -%}txt{{ bold_suffix }}
+      {%- endif -%}
+    {%- elif col == 3 -%}unit
+    {%- elif col == 14 -%}biko
+    {%- else -%}num
+    {%- endif -%}
+  {%- endmacro %}
+
+  {# 1 行分のセル列を描画する共通マクロ。row.visible_cells() の結果を
+     走査し、各セルに colspan（span>1 のみ）と CSS クラスを付与する。 #}
+  {% macro render_cells(row) -%}
+    {%- for cell in row.visible_cells() -%}
+      {%- set css = cell_css(cell.col, row.row_type, row.is_bold) -%}
+      <td{% if cell.span > 1 %} colspan="{{ cell.span }}"{% endif %}{% if css %} class="{{ css }}"{% endif %}>{{ cell.value|e or '&nbsp;'|safe }}</td>
+    {%- endfor -%}
+  {%- endmacro %}
+
+  {% for row in data.rows %}
+    {# 行タイプごとに <tr> のクラスだけ切り替え、セル本体は共通化 #}
+    {% if row.row_type == 'category' %}
+      <tr class="row-category">{{ render_cells(row) }}</tr>
+    {% elif row.row_type == 'subtotal' %}
+      <tr class="row-subtotal">{{ render_cells(row) }}</tr>
+    {% elif row.row_type == 'footer_item' %}
+      <tr class="row-footer-item">{{ render_cells(row) }}</tr>
+    {% elif row.row_type == 'note' %}
+      <tr class="row-note">{{ render_cells(row) }}</tr>
+    {% elif row.row_type == 'spacer' %}
+      <tr class="row-spacer">{{ render_cells(row) }}</tr>
+    {% elif row.row_type == 'pad' %}
+      <tr class="row-pad">{{ render_cells(row) }}</tr>
+    {% else %}
+      <tr class="row-item">{{ render_cells(row) }}</tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+
+</table>
+
+</body>
+</html>

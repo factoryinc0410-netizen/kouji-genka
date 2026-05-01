@@ -1,0 +1,550 @@
+{# 契約条件書 — Excel 見本 完全再現版 (v2.3.14)
+   --------------------------------------------------------
+   7列モデル (A〜G) で Excel 原本のセル結合・罫線・列幅を厳密再現。
+
+   列幅 (合計 180mm = A4 portrait 210mm − 左右 15mm):
+     Excel char-width  : A=10.45 B=10.82 C=22.46 D=10.54 E=10.64 F=11.00 G=20.82
+     -> mm 換算 (×1.87) : A=20    B=20    C=42    D=20    E=20    F=20    G=38
+
+   セクション・レイアウト (Excel 見本の罫線データから検証済):
+     std    (1-8)  : cat colspan=2 rowspan(A+B=タイトル) / label colspan=2 (C+D)
+                     / E (元方✓) / F (下請✓) / G (備考)
+                     縦罫線位置: 0, 40, 102, 122, 142, 180mm
+     wide   (9)    : 独立タイトル行 cat-title-wide colspan=4 (A+B+C+D)
+                     + 項目行: empty-a rowspan(A) / label-wide colspan=3 (B+C+D)
+                     / check-wide colspan=2 (E+F✓) / G (備考)
+                     縦罫線位置: 0, 102, 142, 180mm（40mm・122mm に縦線なし）
+     single (10)   : cat-single colspan=4 (A+B+C+D=タイトル)
+                     / check-wide colspan=2 (E+F✓) / G (備考)
+                     縦罫線位置: 0, 102, 142, 180mm
+
+   Excel 罫線パターン要点:
+     - std の cat (A+B colspan=2) と label (C+D) の境界 = 40mm 縦線
+     - wide では cat と label-wide の間に縦線を描かない (border-left:none)
+     - sec9 タイトル行と項目行の間は A+B+C+D 領域で連続表示（横線なし）
+     - 行内ハイラインは thin (0.2mm) で統一
+     - 最下行 (sec10) と外枠は 0.3〜0.4mm で強制描画 (PDF レンダラ対策)
+#}
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>契約条件書</title>
+<style>
+  /* ─────────── @page (A4 縦) ─────────── */
+  @page {
+    size: A4 portrait;
+    margin: 8mm 15mm 5mm 15mm;
+  }
+
+  /* ─────────── 基本タイポ (Excel ＭＳ Ｐゴシック 準拠) ─────────── */
+  html, body {
+    margin: 0;
+    padding: 0;
+    /* font-family チェーン: Windows → macOS → Linux の順で日本語ゴシックフォントを探索する。
+       Linux (さくらVPS等) では Noto Sans CJK JP / IPAexGothic / IPAGothic を使用する想定。
+         Debian/Ubuntu: `apt install fonts-noto-cjk fonts-ipafont fonts-ipaexfont`
+       Windows/macOS の既存挙動は変えない（先頭優先・OS 上にあるものから採用される）。 */
+    font-family: "MS PGothic", "MS Gothic", "Yu Gothic", "Meiryo",
+                 "Hiragino Kaku Gothic ProN",
+                 "Noto Sans CJK JP", "IPAexGothic", "IPAGothic", sans-serif;
+    font-size: 9pt;
+    color: #000;
+    line-height: 1.05;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ─────────── タイトル ─────────── */
+  h1.title {
+    text-align: center;
+    font-size: 15pt;
+    font-weight: bold;
+    letter-spacing: 0.35em;
+    margin: 0 0 1mm 0;
+    padding-left: 0.35em;
+  }
+
+  /* ─────────── ヘッダ表 (工事名 / 現場代理人) ───────────
+     Excel Row 2: A2=工事名： / B2:D2=工事名値 / E2:F2=現場代理人 / G2=氏名 */
+  table.header-info {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    margin-bottom: 0.5mm;
+  }
+  table.header-info col.h-a   { width: 15mm; }
+  table.header-info col.h-bcd { width: 87mm; }   /* B+C+D merged = 20+42+20 */
+  table.header-info col.h-ef  { width: 45mm; }   /* E+F merged = 20+20 */
+  table.header-info col.h-g   { width: 33mm; }
+  table.header-info td {
+    padding: 0 2px;
+    vertical-align: middle;
+    border: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+  }
+  table.header-info .lbl-koji  { letter-spacing: 0.25em; }
+  table.header-info .lbl-dai   { letter-spacing: 0.25em; text-align: center; padding-left: 18mm;}
+
+  /* ─────────── 「費用負担項目」見出し ─────────── */
+  .section-label {
+    font-weight: bold;
+    font-size: 9pt;
+    margin: 0;
+    padding: 0;
+    line-height: 1.1;
+  }
+
+  /* ─────────── 外枠（メインテーブル 〜 サインブロック を一つの大きな箱に） ───────────
+     罫線の太さを徹底して整理:
+       - .outer-frame 自身: 0.4mm（太枠）— このフレームが唯一の外周線
+       - 枠内テーブルが外枠と接する辺: border: none !important;（二重線排除）
+       - テーブル内部の td/th 区切り線: すべて 0.2mm（細枠）に統一
+       - メインテーブル ⇔ サインブロック の境界（sign-block の border-top）のみ
+         外枠と同じ 0.4mm に揃え、大きなセクション区切りとして表現
+     見出し（.section-label）はフレーム外に置き、上辺・左辺の罫線が見出しに
+     かからないようにする（HTML 側で .outer-frame の直前に配置）
+  */
+  .outer-frame {
+    border: 0.4mm solid #000;
+    border-top: 0mm solid #000 !important;
+    padding: 0;
+    margin-top: 1mm;
+  }
+  .outer-frame > p.note {
+    margin: 0.6mm 0 0.6mm 0;
+    padding: 0 1.5mm 0 0;  /* 右端が外枠に貼り付かないように内側へ余白 */
+  }
+
+  /* 外枠と接する辺は完全に border: none に統一し、二重線・太さのバラつきを排除する。
+     （上下左右の外周線は .outer-frame の 0.4mm が単独で描く唯一の線）
+     左辺も例外なく none にすることで、左右上の見え方を 0.4mm で揃える。 */
+  .outer-frame table.main-table tr td:first-child,
+  .outer-frame table.main-table tr th:first-child {
+    border-left: none !important;
+  }
+
+  .outer-frame table.main-table thead tr:first-child th {
+    border-top: none !important;
+  }
+  /* メインテーブル末尾 bottom は内部区切り線として明示描画する。
+     - sec10（.item-row.last-row）は外枠の 0.4mm 太線と隣接し、
+       border-collapse の挙動次第で線が消失して見えるリスクがある。
+       z-index で td を上層に持ち上げ、線幅も 0.3mm に増して確実に描画。
+     - sec10 以外の :last-child は従来通り内部区切り 0.2mm。 */
+  .outer-frame table.main-table tr:last-child td {
+    border-bottom: 0.2mm solid #000 !important;
+  }
+  .outer-frame table.main-table tr.item-row.last-row td {
+    border-bottom: 0.3mm solid #000 !important;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ─────────── メインテーブル (Excel 罫線忠実再現) ─────────── */
+  table.main-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: none;        /* 外枠は :first-child / :last-child で個別制御 */
+    margin-bottom: 0;
+  }
+  table.main-table th,
+  table.main-table td {
+    border: 0.2mm solid #000;
+    padding: 1.4px 3px;
+    vertical-align: middle;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    line-height: 1.18;
+  }
+
+  /* ─── 外枠強制描画 (PDF エンジン端切れ対策) ─── */
+  table.main-table tr td:first-child,
+  table.main-table tr th:first-child {
+    border-left: 0.4mm solid #000 !important;
+  }
+  table.main-table tr td:last-child,
+  table.main-table tr th:last-child {
+    border-right: 0.4mm solid #000 !important;
+  }
+  table.main-table thead tr:first-child th {
+    border-top: 0.4mm solid #000 !important;
+  }
+  table.main-table tr:last-child td,
+  table.main-table tr.last-row td {
+    border-bottom: 0.4mm solid #000 !important;
+  }
+
+  /* ─── 7列幅 (合計 180mm — Excel char-width 比率に合致) ─── */
+  col.c-a { width: 20mm; }   /* A: section title */
+  col.c-b { width: 20mm; }   /* B: gap (std) / sec9 ワイドラベル左 */
+  col.c-c { width: 42mm; }   /* C: label primary */
+  col.c-d { width: 20mm; }   /* D: label secondary (常に C と merge) */
+  col.c-e { width: 20mm; }   /* E: 元方 ✓ */
+  col.c-f { width: 20mm; }   /* F: 下請 ✓ */
+  col.c-g { width: 38mm; }   /* G: 備考 */
+
+  /* ─── 列ヘッダ ─── */
+  table.main-table thead th {
+    background-color: transparent !important;  /* ← 「色だけ」を透明にするよう変更 */
+    font-weight: normal;
+    text-align: center;
+    vertical-align: middle;
+    font-size: 9pt;
+    padding: 1px 2px;
+    letter-spacing: 0.2em;
+  }
+  /* 左上コーナー (A4:B5 merged) — 斜線のみ */
+  table.main-table thead th.corner {
+    padding: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none' viewBox='0 0 100 100'><line x1='0' y1='0' x2='100' y2='100' stroke='black' stroke-width='0.6' vector-effect='non-scaling-stroke'/></svg>");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+  }
+
+  /* ─── データセル スタイル ─── */
+  /* cat (std 1-8): A+B colspan=2 で 40mm のタイトル領域。1行で長いタイトルが収まるよう
+     white-space:nowrap & word-break/overflow-wrap を normal で上書き。 */
+  td.cat {
+    font-weight: normal;
+    text-align: left;
+    padding: 1px 4px;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    overflow: hidden;
+  }
+  td.label { font-size: 9pt; text-align: left; padding-left: 4px; }
+  /* sec9 タイトル行: A+B+C+D を colspan=4 で結合し、タイトルを必ず1行で表示。
+     見本 Excel 通り、下端罫線は label-wide 連続表示のため none で抜く。 */
+  td.cat-title-wide {
+    font-weight: normal;
+    text-align: left;
+    padding: 1px 4px;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    overflow: hidden;
+  }
+  /* sec9 項目行の A 列 (rowspan の空セル): 内部罫線をすべて抜き、A 列を「タイトル領域の続き」
+     として連続表示。Excel 見本では A 列に縦線（左外枠）以外の罫線は無い。 */
+  td.cat-empty {
+    border-top: none !important;
+    border-bottom: none !important;
+    border-right: none !important;
+    padding: 0;
+  }
+  /* sec9 項目ラベル B+C+D colspan=3。
+     左罫線 (20mm 位置) は描画しない（Excel 見本に合わせる）。
+     上下罫線も連続表示のため none。 */
+  td.label-wide {
+    font-size: 9pt;
+    text-align: left;
+    padding-left: 4px;
+    border-left: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+  }
+  td.cat-single {
+    font-weight: normal;
+    text-align: left;
+    padding-left: 4px;
+    /* 10番の区分の上の罫線のみを消去 */
+    border-top: none !important;
+  } /* sec10 A+B+C+D */
+  td.check {
+    text-align: center;
+    font-family: "MS PGothic", "Segoe UI Symbol", "Meiryo",
+                 "Noto Sans CJK JP", "IPAexGothic", "IPAGothic", sans-serif;
+    font-size: 10pt;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0;
+  }
+  td.check-wide { /* sec9/sec10 E+F merged check; same visual as .check */
+    text-align: center;
+    font-family: "MS PGothic", "Segoe UI Symbol", "Meiryo",
+                 "Noto Sans CJK JP", "IPAexGothic", "IPAGothic", sans-serif;
+    font-size: 10pt;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0;
+  }
+  td.biko       { font-size: 9pt; text-align: left; padding-left: 3px; }
+
+  /* ─── std (1-8): cat colspan=2 (A+B) と label colspan=2 (C+D) の境界に 40mm 縦線
+     これは td 標準の border (0.2mm) で自動描画される。 ─── */
+
+  /* ─── sec9 wide: cat-title-wide の下端は連続表示するため B border を抜く
+     （cat-empty / label-wide も border-top:none で連続性を担保）─── */
+  td.cat-title-wide { border-bottom: none !important; }
+
+  /* ─── sec10 single: cat-single は :first-child のため left border は外枠が担当。
+     下端罫線は外枠 0.4mm との重なりで消えないよう、
+     `.last-row` 専用ルール（上方）で z-index を上げ、明示的に 0.3mm を描画する。 ─── */
+
+  /* ページ分割保護 */
+  tr.item-row { page-break-inside: avoid; }
+
+  /* セクション 9（wide）内部の項目間横線を消去：
+     一つのセクションとして連続して見せるため、loop.last 以外の行の bottom を抜く */
+  .no-border-bottom td { border-bottom: none !important; }
+
+  /* ─────────── 注記行 ─────────── */
+  p.note {
+    font-size: 9pt;
+    text-align: right;
+    margin: 1mm 0 1mm 0;
+    padding-right: 2px;
+  }
+
+  /* ─────────── サインブロック (7列・外枠のみ) ───────────
+     Excel Row 62-64:
+       A62=（元請負人） B62=住所 C62=address(元) D62=空 E62=商号又は名称 F62:G62=company(下)
+       A63=空 (or 代表構成員) B63=商号又は名称 C63=company(元) D63=空 E63=住所 F63:G63=address(下)
+       A64=空 B64=氏名 C64=name(元) D64=空 E64=氏名 F64:G64=name(下)
+     Excel 罫線: 外周のみ (内部は罫線なし)
+  */
+  table.sign-block {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    page-break-inside: avoid;
+    margin-top: 5mm;
+    border: 0.4mm solid #000 !important;
+  }
+  /* 外枠内のサインブロックは固有の 0.4mm 外周をすべて解除する。
+     上辺の区切り線も外し、注記やメインテーブルから連続して見える流れに。
+     左右・下辺は外枠と接するため none、内部 td は元から罫線なし。 */
+  .outer-frame > table.sign-block {
+    margin-top: 1.5mm;
+    margin-bottom: 0;
+    border: none !important;
+    border-top: none !important;  /* 上罫線を撤去：直前要素から連続して見せる */
+  }
+  table.sign-block td {
+    border: none;
+    padding: 1px 3px;
+    vertical-align: middle;
+    font-size: 9pt;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: visible;       /* hidden から visible に変更（切らずに表示） */
+    letter-spacing: -0.5px;  /* 文字の間隔をほんの少し詰めて、枠内にスッキリ収める */
+  }
+  /* 元請・下請の「値」のセルだけを右にずらす */
+  table.sign-block .lbl + td {
+    padding-left: 5mm !important; 
+  }
+
+  /* メインテーブルと同一の 7列幅 */
+  table.sign-block col.s-a { width: 20mm; }
+  table.sign-block col.s-b { width: 20mm; }
+  table.sign-block col.s-c { width: 42mm; }
+  table.sign-block col.s-d { width: 20mm; }
+  table.sign-block col.s-e { width: 20mm; }
+  table.sign-block col.s-f { width: 20mm; }
+  table.sign-block col.s-g { width: 38mm; }
+  table.sign-block .party-label { font-weight: normal; letter-spacing: 0; }
+  table.sign-block .lbl {
+    font-weight: normal;
+    letter-spacing: 0.05em;   /* Excel 原本に合わせて控えめに */
+    white-space: nowrap;
+  }
+  /* ─── 見出しの罫線修正（太さを標準の0.2mmに固定） ─── */
+  /* 一番上の行の線を、内側の線と同じ0.2mmで強制上書きする */
+  .outer-frame table.main-table thead tr:first-child th {
+    border-top: 0.2mm solid #000 !important;
+  }
+  
+  /* 左端と右端も、もし太すぎる場合はここを 0.2mm に変更してください */
+  .outer-frame table.main-table thead th.corner {
+    border-left: 0mm solid #000 !important;
+  }
+  .outer-frame table.main-table thead tr:first-child th:last-child {
+    border-right: 0.4mm solid #000 !important;
+  }
+  /* ─── PDF描画バグ（サブピクセルギャップ）を完全に埋める対策 ─── */
+  .outer-frame table.main-table,
+  .outer-frame table.sign-block {
+    width: calc(100% + 0.6mm) !important;
+    margin-left: -0.3mm !important;
+  }
+
+</style>
+</head>
+<body>
+
+<h1 class="title">契 約 条 件 書</h1>
+
+{# ──────── ヘッダ (工事名 / 現場代理人) ──────── #}
+<table class="header-info">
+  <colgroup>
+    <col class="h-a">
+    <col class="h-bcd">
+    <col class="h-ef">
+    <col class="h-g">
+  </colgroup>
+  <tr>
+    <td class="lbl-koji">工事名：</td>
+    <td class="val-koji">{{ data.koji_kenmei|e }}</td>
+    <td class="lbl-dai">現場代理人</td>
+    <td class="val-dai">{{ data.genba_dairinin|e }}</td>
+  </tr>
+</table>
+
+{# ──────── 「費用負担項目」独立ラベル（外枠の外に配置：見出しの上辺・左辺に罫線をかけない） ──────── #}
+<div class="section-label">費用負担項目</div>
+
+{# ──────── 外枠開始（メインテーブル 〜 サインブロック を一つの大きな箱で囲う） ──────── #}
+<div class="outer-frame">
+
+{# ──────── メインテーブル (Excel 7列モデル) ──────── #}
+<table class="main-table">
+  <colgroup>
+    <col class="c-a">
+    <col class="c-b">
+    <col class="c-c">
+    <col class="c-d">
+    <col class="c-e">
+    <col class="c-f">
+    <col class="c-g">
+  </colgroup>
+
+  <thead>
+    {# Row 4 of Excel: corner(A4:B5)=斜線 / 区分(C4:D5) / 費用負担会社(E4:F4) / 備考(G4:G5) #}
+    <tr>
+      <th class="corner" colspan="2" rowspan="2"></th>
+      <th colspan="2" rowspan="2">区　分</th>
+      <th colspan="2">費用負担会社</th>
+      <th rowspan="2">備　考</th>
+    </tr>
+    {# Row 5 of Excel: 元方(E5) / 下請(F5) #}
+    <tr>
+      <th>元方</th>
+      <th>下請</th>
+    </tr>
+  </thead>
+
+  <tbody>
+  {% for section in data.sections %}
+    {% set n_items = section.items|length %}
+
+    {# ── セクション 10: layout="single"
+         A+B+C+D=タイトル(colspan=4) / E+F=✓ / G=備考。表の最終行 (.last-row)。 ── #}
+    {% if section.layout == "single" %}
+      {% set it = section.items[0] if section.items else None %}
+      <tr class="item-row last-row">
+        <td class="cat-single" colspan="4">{{ section.title|e }}{% if it and it.label %}　{{ it.label|e }}{% endif %}</td>
+        <td class="check-wide" colspan="2">{% if it and (it.motokata_checked or it.shitauke_checked) %}✓{% endif %}</td>
+        <td class="biko">{{ (it.biko if it else "")|e }}</td>
+      </tr>
+
+    {# ── セクション 9: layout="wide"
+         独立タイトル行 (A+B+C+D colspan=4) + 項目行 (cat-empty rowspan + label-wide colspan=3 + ✓ + 備考)。
+         A 列〜D 列はタイトルから項目まで縦に連続表示（横罫線なし、内部縦線も B|C・C|D は描画しない）。 ── #}
+    {% elif section.layout == "wide" %}
+      {# タイトル行 #}
+      <tr class="item-row sec-title">
+        <td class="cat-title-wide" colspan="4">{{ section.title|e }}</td>
+        <td class="check-wide" colspan="2"></td>
+        <td class="biko"></td>
+      </tr>
+      {# 項目行 (各小分類が独立 tr) #}
+      {% for item in section.items %}
+      <tr class="item-row{% if not loop.last %} no-border-bottom{% endif %}">
+        {% if loop.first %}
+          <td class="cat-empty" rowspan="{{ n_items }}"></td>
+        {% endif %}
+        <td class="label-wide" colspan="3">{{ item.label|e }}</td>
+        <td class="check-wide" colspan="2">{% if item.motokata_checked or item.shitauke_checked %}✓{% endif %}</td>
+        <td class="biko">{{ item.biko|e }}</td>
+      </tr>
+      {% endfor %}
+
+    {# ── セクション 1-8: layout="std"
+         cat colspan=2 rowspan(A+B=タイトル) / label colspan=2 (C+D) / E (元方✓) / F (下請✓) / G (備考)。
+         A+B を結合することでタイトルが必ず1行で収まる。 ── #}
+    {% else %}
+      {% for item in section.items %}
+      <tr class="item-row">
+        {% if loop.first %}
+          <td class="cat" colspan="2" rowspan="{{ n_items }}">{{ section.title|e }}</td>
+        {% endif %}
+        <td class="label" colspan="2">{{ item.label|e }}</td>
+        <td class="check">{% if item.motokata_checked %}✓{% endif %}</td>
+        <td class="check">{% if item.shitauke_checked %}✓{% endif %}</td>
+        <td class="biko">{{ item.biko|e }}</td>
+      </tr>
+      {% endfor %}
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+
+{# ──────── 注記行 ──────── #}
+<p class="note">{{ data.note_line|e }}</p>
+
+{# ──────── サインブロック (7列・Excel Row 61-64 構造) ──────── #}
+<table class="sign-block">
+  <colgroup>
+    <col class="s-a"> <col class="s-b"> <col class="s-c"> <col class="s-d">
+    <col class="s-e"> <col class="s-f"> <col class="s-g">
+  </colgroup>
+
+  {# --- 1段目 (JV名 または 空白) --- #}
+  <tr>
+    <td class="party-label">{% if data.motouke_group_name %}（元請負人）{% endif %}</td>
+    {% if data.motouke_group_name %}
+      <td colspan="3" class="party-label">{{ data.motouke_group_name|e }}</td>
+      <td colspan="3"></td>
+    {% else %}
+      <td colspan="6"></td>
+    {% endif %}
+  </tr>
+
+  {# --- 2段目 (元請住所 / 下請住所) --- #}
+  <tr>
+    <td class="party-label">
+      {% if data.motouke_group_name %}
+        {{ data.daikyo_koseiin_label|e or '（代表構成員）' }}
+      {% else %}
+        （元請負人）
+      {% endif %}
+    </td>
+    <td class="lbl">住　　所</td>
+    <td>{{ data.motouke.address|e }}</td>
+    <td></td>
+    <td class="lbl">住　　所</td>
+    <td colspan="2">{{ data.shitauke.address|e }}</td>
+  </tr>
+
+  {# --- 3段目 (元請会社名 / 下請会社名) --- #}
+  <tr>
+    <td class="party-label"></td>
+    <td class="lbl">商号又は名称</td>
+    <td>{{ data.motouke.company|e }}</td>
+    <td></td>
+    <td class="lbl">商号又は名称</td>
+    <td colspan="2">{{ data.shitauke.company|e }}</td>
+  </tr>
+
+  {# --- 4段目 (元請氏名 / 下請氏名) --- #}
+  <tr>
+    <td></td>
+    <td class="lbl">氏　　名</td>
+    <td>{{ data.motouke.name|e }}</td>
+    <td></td>
+    <td class="lbl">氏　　名</td>
+    <td colspan="2">{{ data.shitauke.name|e }}</td>
+  </tr>
+</table>
+
+{# ──────── 外枠終了 ──────── #}
+</div>
+
+</body>
+</html>

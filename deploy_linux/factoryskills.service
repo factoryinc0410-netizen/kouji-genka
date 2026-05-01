@@ -1,0 +1,94 @@
+# ================================================================
+#  Factoryskills - systemd unit
+#  配置先: /etc/systemd/system/factoryskills.service
+#
+#  前提:
+#    - アプリ配置先 : /opt/factoryskills
+#    - 実行ユーザー : factoryskills (専用一般ユーザー)
+#    - 実行グループ : factoryskills
+#    - venv         : /opt/factoryskills/.venv
+#    - .env         : /opt/factoryskills/.env
+#
+#  インストール:
+#    sudo cp deploy_linux/factoryskills.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable factoryskills
+#    sudo systemctl start factoryskills
+#
+#  状態確認:
+#    sudo systemctl status factoryskills
+#    sudo journalctl -u factoryskills -f
+#
+#  注意:
+#    --workers は必ず 1 を維持すること。
+#    ジョブキュー（web_app/services/worker.py）はプロセス内 queue.Queue で
+#    実装されており、複数プロセスにすると DB 排他とジョブ重複処理の問題が発生する。
+# ================================================================
+
+[Unit]
+Description=Factoryskills - Business automation web platform (FastAPI/Uvicorn)
+Documentation=https://github.com/  # 必要に応じて更新
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ── 実行ユーザー / 作業ディレクトリ ──
+User=factoryskills
+Group=factoryskills
+WorkingDirectory=/opt/factoryskills
+
+# ── 環境変数 ──
+# .env を EnvironmentFile で読み込む（dotenv ロードと二重になるが冪等）
+EnvironmentFile=/opt/factoryskills/.env
+Environment="PYTHONIOENCODING=utf-8"
+Environment="PYTHONUNBUFFERED=1"
+
+# ── 起動コマンド ──
+# uvicorn を venv 内 Python から直接起動。--workers 1 は必須（上記注意参照）。
+ExecStart=/opt/factoryskills/.venv/bin/uvicorn web_app.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info \
+    --no-access-log
+
+# ── 停止 ──
+# 終了時は SIGTERM → 30 秒待機 → SIGKILL
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# ── 自動再起動 ──
+Restart=on-failure
+RestartSec=5s
+
+# ── ログ（stdout/stderr は journald 経由で /var/log/journal に蓄積） ──
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=factoryskills
+
+# ── セキュリティ強化（任意・推奨） ──
+# /opt/factoryskills 以外への書き込みを禁止し、攻撃面を狭める。
+# アップロード/出力ディレクトリは /opt/factoryskills 配下に置く前提。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# 必要なら以下で書き込み許可ディレクトリを明示できる（任意）
+# ReadWritePaths=/opt/factoryskills/data /opt/factoryskills/uploads /opt/factoryskills/outputs /opt/factoryskills/logs
+
+# ── リソース制限（任意） ──
+# Playwright の Chromium は意外とメモリを食うため、最低でも 1GB は確保したい。
+# ジョブが大量に走るときは増やす。
+# MemoryMax=2G
+# CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
