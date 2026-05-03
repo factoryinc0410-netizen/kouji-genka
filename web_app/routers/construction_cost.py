@@ -868,7 +868,7 @@ async def workers_delete(
 @router.get("/template/download")
 async def template_download(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     target_month: str = "",
 ):
     """DBの最新マスタを反映したプルダウン付き日報テンプレートを生成・ダウンロードする。"""
@@ -911,7 +911,7 @@ async def template_download(
 @router.get("/aggregate", response_class=HTMLResponse)
 async def aggregate_page(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     msg: str = "",
     cat: str = "success",
 ):
@@ -923,7 +923,7 @@ async def aggregate_page(
 @router.post("/aggregate", response_class=HTMLResponse)
 async def aggregate_run(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     target_month: str = Form(...),
     file: UploadFile = File(...),
 ):
@@ -1045,7 +1045,7 @@ async def aggregate_run(
 @router.post("/aggregate/confirm")
 async def aggregate_confirm(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     log_id: str = Form(...),
 ):
     """集計結果を確認後、累計金額を確定更新する。draft → confirmed に遷移。"""
@@ -1140,7 +1140,7 @@ async def aggregate_confirm(
 async def aggregate_download(
     target_month: str,
     filename: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
 ):
     """集計結果Excelのダウンロード。"""
     # safe_file_response がパス検証（OUTPUT_BASE 配下に収まっているか）と
