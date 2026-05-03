@@ -872,6 +872,14 @@ async def template_download(
     target_month: str = "",
 ):
     """DBの最新マスタを反映したプルダウン付き日報テンプレートを生成・ダウンロードする。"""
+    # クエリパラメータ target_month のバリデーション（YYYY-MM 形式以外は破棄）
+    # build_template への伝搬と Content-Disposition への埋め込みを遮断する
+    if target_month:
+        try:
+            datetime.strptime(target_month, "%Y-%m")
+        except ValueError:
+            target_month = ""
+
     db = await get_db()
     try:
         sites = await _get_sites(db, active_only=True)
