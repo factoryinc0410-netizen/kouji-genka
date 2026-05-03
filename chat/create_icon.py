@@ -1,6 +1,5 @@
 """Factory Platform のアイコン (.ico) を生成"""
 import struct
-import zlib
 
 def create_ico():
     """シンプルなオレンジ背景に白F文字の32x32アイコンを生成"""

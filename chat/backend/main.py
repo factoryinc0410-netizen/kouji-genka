@@ -5,11 +5,10 @@ Factory Chat Platform — バックエンド
 
 import os
 import uuid
-import shutil
 from datetime import datetime, date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel

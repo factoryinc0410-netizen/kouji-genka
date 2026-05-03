@@ -1,0 +1,10 @@
+# ============================================================
+# Development-only dependencies
+# Install with: pip install -r requirements-dev.txt
+# ============================================================
+
+# Linter / unused-import detection
+ruff>=0.6.0
+
+# Test runner
+pytest>=8.0.0

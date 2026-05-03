@@ -26,7 +26,7 @@ from web_app.core.config import LIBREOFFICE_TIMEOUT as LIBREOFFICE_TIMEOUT  # no
 # 参照先:
 # - UI 右下のバッジに「注文書作成 v{ORDER_DOCS_VERSION}」として表示される
 # - CSS/JS の読込 URL にも（CORE_VERSION と結合して）付与される
-ORDER_DOCS_VERSION: str = "2.3.18-linux-portability"
+ORDER_DOCS_VERSION: str = "2.3.19-unused-import-cleanup"
 
 # 旧 APP_VERSION は後方互換のためエイリアスとして残置する。
 # 新規コードでは必ず ORDER_DOCS_VERSION を参照すること。
