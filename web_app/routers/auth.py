@@ -8,7 +8,7 @@ import aiosqlite
 
 from web_app.core.dependencies import db_dependency, SESSION_COOKIE
 from web_app.core.auth import authenticate, create_session, delete_session
-from web_app.core.config import SESSION_MAX_AGE
+from web_app.core.config import SESSION_MAX_AGE, SESSION_COOKIE_SECURE
 from web_app.core.templates import templates as _templates
 
 router = APIRouter(tags=["auth"])
@@ -36,6 +36,11 @@ async def login_action(
             "error": "ユーザー名またはパスワードが正しくありません。",
         }, status_code=401)
 
+    # Session Fixation 対策: 既存の Cookie 由来セッションがあれば破棄してから新規発行
+    old_token = request.cookies.get(SESSION_COOKIE)
+    if old_token:
+        await delete_session(db, old_token)
+
     token = await create_session(db, user["id"])
     response = RedirectResponse(url="/", status_code=303)
     response.set_cookie(
@@ -44,6 +49,7 @@ async def login_action(
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
+        secure=SESSION_COOKIE_SECURE,
     )
     return response
 
@@ -58,5 +64,10 @@ async def logout(
     if token:
         await delete_session(db, token)
     response = RedirectResponse(url="/login", status_code=303)
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(
+        SESSION_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=SESSION_COOKIE_SECURE,
+    )
     return response

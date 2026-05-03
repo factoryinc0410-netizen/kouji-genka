@@ -11,20 +11,23 @@
 import asyncio
 import logging
 import shutil
-from pathlib import Path
 from threading import Thread
 
 import aiosqlite
 
-from web_app.core.config import DATABASE_PATH, UPLOAD_DIR, OUTPUT_DIR, CLEANUP_AGE_HOURS
+from web_app.core.config import (
+    DATABASE_PATH,
+    UPLOAD_DIR,
+    OUTPUT_DIR,
+    CLEANUP_AGE_HOURS,
+    CLEANUP_INTERVAL,
+    MAX_JOBS_PER_USER,
+)
 
 logger = logging.getLogger("web_app.cleanup")
 
 _cleanup_thread: Thread | None = None
 _stop_event: asyncio.Event | None = None
-
-# クリーンアップ実行間隔（秒）— 1時間ごと
-CLEANUP_INTERVAL = 3600
 
 
 def start_cleanup_scheduler(loop: asyncio.AbstractEventLoop) -> None:
@@ -91,10 +94,6 @@ async def _run_cleanup() -> None:
 
     finally:
         await db.close()
-
-
-# ユーザーごとに保持する最大ジョブ数
-MAX_JOBS_PER_USER = 4
 
 
 async def _cleanup_excess_jobs(db: aiosqlite.Connection) -> int:

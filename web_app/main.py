@@ -192,6 +192,22 @@ async def no_cache_static_js(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """全レスポンスに最低限のセキュリティヘッダーを付与する。
+
+    - X-Content-Type-Options: MIME スニッフィング防止
+    - X-Frame-Options: クリックジャッキング防止（iframe 埋め込み禁止）
+    - Referrer-Policy: 外部サイトに完全な URL を漏らさない
+    既存ヘッダーは setdefault で尊重し、上書きしない。
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
+
+
 # ── ルーター登録 ──────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(portal.router)

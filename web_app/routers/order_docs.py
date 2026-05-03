@@ -13,15 +13,16 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, UploadFile, File
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 import aiosqlite
 
 from web_app.core.config import UPLOAD_DIR, OUTPUT_DIR, MAX_UPLOAD_SIZE_MB
 from web_app.core.dependencies import db_dependency, get_current_user
+from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
 from web_app.services.job_queue import (
-    create_job, check_duplicate, compute_file_hash, get_job, get_user_jobs,
+    check_duplicate, compute_file_hash, get_job, get_user_jobs,
     job_queue,
 )
 from web_app.services.validator import validate_excel
@@ -269,11 +270,11 @@ async def download_zip(
         return JSONResponse({"error": "ダウンロード可能なファイルがありません"}, status_code=400)
 
     zip_path = Path(job["result_zip"])
-    if not zip_path.exists():
-        return JSONResponse({"error": "ファイルが見つかりません"}, status_code=404)
-
-    return FileResponse(
-        path=zip_path,
+    # safe_file_response が OUTPUT_DIR 配下に収まっているか・実体が存在するかを
+    # まとめて検証し、範囲外（DB 改竄等）も非存在も 404 を返す
+    return safe_file_response(
+        zip_path,
+        OUTPUT_DIR,
         filename=zip_path.name,
         media_type="application/zip",
     )

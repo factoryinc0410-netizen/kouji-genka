@@ -10,8 +10,6 @@ from queue import Queue
 
 import aiosqlite
 
-from web_app.core.config import UPLOAD_DIR, OUTPUT_DIR
-
 logger = logging.getLogger("web_app.job_queue")
 
 # ── プロセス内キュー（ワーカースレッドとの連携用） ────────────

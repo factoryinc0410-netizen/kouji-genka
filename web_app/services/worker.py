@@ -12,7 +12,13 @@ from threading import Thread
 
 import aiosqlite
 
-from web_app.core.config import DATABASE_PATH, OUTPUT_DIR, COM_TEMP_DIR
+from web_app.core.config import (
+    DATABASE_PATH,
+    OUTPUT_DIR,
+    COM_TEMP_DIR,
+    # 設定値の再エクスポート（外部から `worker.JOB_TIMEOUT_SECONDS` で参照されるため保持）
+    JOB_TIMEOUT_SECONDS,  # noqa: F401
+)
 from web_app.services.job_queue import job_queue
 from web_app.services.excel_guard import (
     track_excel_processes,
@@ -20,9 +26,6 @@ from web_app.services.excel_guard import (
 )
 
 logger = logging.getLogger("web_app.worker")
-
-# ── ジョブ処理タイムアウト（秒） ──────────────────────────────
-JOB_TIMEOUT_SECONDS = 600  # 10分
 
 _worker_thread: Thread | None = None
 _event_loop: asyncio.AbstractEventLoop | None = None

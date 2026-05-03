@@ -19,6 +19,18 @@ load_dotenv(_PROJECT_ROOT / ".env")
 SECRET_KEY: str = os.getenv("SECRET_KEY", secrets.token_hex(32))
 SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", "28800"))  # 8時間
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# 本番 HTTPS 環境では SESSION_COOKIE_SECURE=true を設定する。
+# デフォルト False（HTTP のローカル開発を壊さないため）。
+SESSION_COOKIE_SECURE: bool = _env_bool("SESSION_COOKIE_SECURE", False)
+
 # ── サーバー設定 ──────────────────────────────────────────────
 HOST: str = os.getenv("HOST", "127.0.0.1")
 PORT: int = int(os.getenv("PORT", "8000"))
@@ -65,6 +77,14 @@ MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
 
 # ── クリーンアップ ────────────────────────────────────────────
 CLEANUP_AGE_HOURS: int = int(os.getenv("CLEANUP_AGE_HOURS", "72"))
+# クリーンアップ実行間隔（秒）— デフォルト 1 時間
+CLEANUP_INTERVAL: int = int(os.getenv("CLEANUP_INTERVAL", "3600"))
+# ユーザーごとに保持する最大ジョブ数（completed/error）
+MAX_JOBS_PER_USER: int = int(os.getenv("MAX_JOBS_PER_USER", "4"))
+
+# ── ワーカー ──────────────────────────────────────────────────
+# ジョブ処理タイムアウト（秒）— デフォルト 10 分
+JOB_TIMEOUT_SECONDS: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "600"))
 
 # ── ディレクトリ自動作成 ──────────────────────────────────────
 for _dir in (DATABASE_PATH.parent, UPLOAD_DIR, OUTPUT_DIR):

@@ -1,7 +1,7 @@
 """
 FastAPI 共通依存関係 — DB 接続・認証済みユーザー取得
 """
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request, status
 
 import aiosqlite
 
@@ -40,4 +40,18 @@ async def get_current_user(request: Request) -> dict:
 
     if user is None:
         raise RequiresLoginException()
+    return user
+
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """管理者権限を要求する依存関数。
+
+    未ログイン時は get_current_user 経由で RequiresLoginException が送出され、
+    ログイン済みでも is_admin が False の場合は 403 を返す。
+    """
+    if not user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="管理者権限が必要です",
+        )
     return user

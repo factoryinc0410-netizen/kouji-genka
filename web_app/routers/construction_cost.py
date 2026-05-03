@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import uuid
 from datetime import datetime
 from io import BytesIO
@@ -15,10 +14,11 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from web_app.core.database import get_db
-from web_app.core.dependencies import get_current_user
+from web_app.core.dependencies import get_current_user, require_admin
+from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
 
 from skills.construction_cost.reader import read_daily_sheets, normalize_str
@@ -43,10 +43,6 @@ OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 # ────────────────────────────────────────────
 # ヘルパー関数
 # ────────────────────────────────────────────
-
-def _flash(request: Request, msg: str, cat: str = "success"):
-    pass
-
 
 async def _get_sites(db, active_only: bool = False) -> list[dict]:
     sql = "SELECT * FROM cc_sites"
@@ -464,7 +460,7 @@ async def monthly_workers(
 @router.get("/groups", response_class=HTMLResponse)
 async def groups_page(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     msg: str = "",
     cat: str = "success",
 ):
@@ -481,23 +477,25 @@ async def groups_page(
 @router.post("/groups/add")
 async def groups_add(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     group_name: str = Form(...),
     display_order: int = Form(0),
 ):
     db = await get_db()
     try:
-        await db.execute(
-            "INSERT INTO cc_groups (group_name, display_order) VALUES (?, ?)",
-            (group_name.strip(), display_order),
-        )
-        await db.commit()
-    except Exception as e:
-        await db.close()
-        return RedirectResponse(
-            url=f"/construction-cost/groups?msg=登録エラー: {e}&cat=danger",
-            status_code=303,
-        )
+        try:
+            await db.execute(
+                "INSERT INTO cc_groups (group_name, display_order) VALUES (?, ?)",
+                (group_name.strip(), display_order),
+            )
+            await db.commit()
+        except Exception:
+            ref = uuid.uuid4().hex[:8]
+            logger.exception("グループ登録エラー (ref=%s)", ref)
+            return RedirectResponse(
+                url=f"/construction-cost/groups?msg=登録に失敗しました（参照番号: {ref}）&cat=danger",
+                status_code=303,
+            )
     finally:
         await db.close()
     return RedirectResponse(
@@ -509,7 +507,7 @@ async def groups_add(
 @router.post("/groups/update")
 async def groups_update(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     group_id: int = Form(...),
     group_name: str = Form(...),
     display_order: int = Form(0),
@@ -553,7 +551,7 @@ async def groups_update(
 @router.get("/sites", response_class=HTMLResponse)
 async def sites_page(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     msg: str = "",
     cat: str = "success",
 ):
@@ -587,7 +585,7 @@ async def sites_page(
 @router.post("/sites/add")
 async def sites_add(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     site_name: str = Form(...),
     budget: float = Form(0),
     initial_cumulative_cost: float = Form(0),
@@ -619,10 +617,11 @@ async def sites_add(
             (site_code, site_name.strip(), budget, initial_cumulative_cost, initial_cumulative_cost, status),
         )
         await db.commit()
-    except Exception as e:
-        await db.close()
+    except Exception:
+        ref = uuid.uuid4().hex[:8]
+        logger.exception("現場登録エラー (ref=%s)", ref)
         return RedirectResponse(
-            url=f"/construction-cost/sites?msg=登録エラー: {e}&cat=danger",
+            url=f"/construction-cost/sites?msg=登録に失敗しました（参照番号: {ref}）&cat=danger",
             status_code=303,
         )
     finally:
@@ -636,7 +635,7 @@ async def sites_add(
 @router.post("/sites/update")
 async def sites_update(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     site_id: int = Form(...),
     site_name: str = Form(...),
     initial_cumulative_cost: float = Form(0),
@@ -715,11 +714,12 @@ async def sites_update(
              initial_cumulative_cost, status, site_id),
         )
         await db.commit()
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        logger.exception("現場更新エラー (site_id=%s)", site_id)
+        ref = uuid.uuid4().hex[:8]
+        logger.exception("現場更新エラー (site_id=%s, ref=%s)", site_id, ref)
         return RedirectResponse(
-            url=f"/construction-cost/sites?msg=更新エラー: {e}&cat=danger",
+            url=f"/construction-cost/sites?msg=更新に失敗しました（参照番号: {ref}）&cat=danger",
             status_code=303,
         )
     finally:
@@ -733,7 +733,7 @@ async def sites_update(
 @router.post("/sites/delete")
 async def sites_delete(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     site_id: int = Form(...),
 ):
     db = await get_db()
@@ -758,7 +758,7 @@ async def sites_delete(
 @router.get("/workers", response_class=HTMLResponse)
 async def workers_page(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     msg: str = "",
     cat: str = "success",
 ):
@@ -776,7 +776,7 @@ async def workers_page(
 @router.post("/workers/add")
 async def workers_add(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     worker_name: str = Form(...),
     role: str = Form(""),
     group_name: str = Form(""),
@@ -787,18 +787,20 @@ async def workers_add(
 ):
     db = await get_db()
     try:
-        await db.execute(
-            """INSERT INTO cc_workers (worker_name, role, group_name, daily_rate, overtime_rate, night_rate, transport)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (worker_name.strip(), role.strip(), group_name.strip() or None, daily_rate, overtime_rate, night_rate, transport),
-        )
-        await db.commit()
-    except Exception as e:
-        await db.close()
-        return RedirectResponse(
-            url=f"/construction-cost/workers?msg=登録エラー: {e}&cat=danger",
-            status_code=303,
-        )
+        try:
+            await db.execute(
+                """INSERT INTO cc_workers (worker_name, role, group_name, daily_rate, overtime_rate, night_rate, transport)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (worker_name.strip(), role.strip(), group_name.strip() or None, daily_rate, overtime_rate, night_rate, transport),
+            )
+            await db.commit()
+        except Exception:
+            ref = uuid.uuid4().hex[:8]
+            logger.exception("作業員登録エラー (ref=%s)", ref)
+            return RedirectResponse(
+                url=f"/construction-cost/workers?msg=登録に失敗しました（参照番号: {ref}）&cat=danger",
+                status_code=303,
+            )
     finally:
         await db.close()
     return RedirectResponse(
@@ -810,7 +812,7 @@ async def workers_add(
 @router.post("/workers/update")
 async def workers_update(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     worker_id: int = Form(...),
     worker_name: str = Form(...),
     role: str = Form(""),
@@ -841,7 +843,7 @@ async def workers_update(
 @router.post("/workers/delete")
 async def workers_delete(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
     worker_id: int = Form(...),
 ):
     db = await get_db()
@@ -1141,14 +1143,12 @@ async def aggregate_download(
     user: dict = Depends(get_current_user),
 ):
     """集計結果Excelのダウンロード。"""
+    # safe_file_response がパス検証（OUTPUT_BASE 配下に収まっているか）と
+    # 存在チェックをまとめて行い、範囲外・非存在いずれも 404 を返す
     file_path = OUTPUT_BASE / target_month / filename
-    if not file_path.exists():
-        return RedirectResponse(
-            url="/construction-cost/aggregate?msg=ファイルが見つかりません&cat=danger",
-            status_code=303,
-        )
-    return FileResponse(
-        path=str(file_path),
+    return safe_file_response(
+        file_path,
+        OUTPUT_BASE,
         filename=filename,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
@@ -1236,7 +1236,7 @@ async def history_page(
 async def rollback_log(
     log_id: int,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
 ):
     """確定済み集計ログのロールバック（確定取り消し）。
 
