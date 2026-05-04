@@ -1,0 +1,23 @@
+[tool.pytest.ini_options]
+# テスト発見パス
+testpaths = ["tests"]
+
+# 出力フォーマット
+# -ra: スキップ・失敗・エラー・期待外パスの理由をサマリ表示
+addopts = "-ra"
+
+# カスタムマーカー登録
+# - slow: PDF 実生成など重いテスト（デフォルトでは含むが除外可能）
+# - requires_sample: サンプル Excel が必要なテスト
+# - requires_chromium: Playwright + Chromium が必要なテスト
+markers = [
+    "slow: 重いテスト（PDF 実生成等）。`pytest -m 'not slow'` で除外可能",
+    "requires_sample: サンプル Excel が必要。Excel が無ければ自動 skip",
+    "requires_chromium: Playwright Chromium が必要。未インストール時は skip",
+]
+
+# 警告フィルタ
+# pypdf がフォントマップ抽出時に出すノイズ警告を抑制（PDF 自体は正常）
+filterwarnings = [
+    "ignore::DeprecationWarning:pypdf.*",
+]

@@ -67,19 +67,36 @@
 
 ---
 
-## B-4. tests/ ディレクトリを pytest 形式へ移行
+## C-2. pypdf 6 系への移行に伴う非推奨警告の解消
 
 **現状** (2026-05-04 時点):
-- `/home/ubuntu/dev-app/tests/` には `test_*.py` というファイル名のスクリプトが複数存在するが、中身は pytest 形式ではなく `def main(): ...` + `if __name__ == "__main__": sys.exit(main())` の手動実行スクリプトである。
-- そのため `pytest tests/` を実行しても `collected 0 items` となり、CI 的な自動回帰検証が機能しない。
-- C-1 Phase B では py_compile + importlib による代替検証で済ませた経緯がある。
+- `skills/order_docs/pdf_merger.py:62` の `writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)` 呼び出しが、pypdf 6 系で 2 件の DeprecationWarning を出している。
+  - `remove_identicals` → `remove_duplicates` に改名（pypdf 7.0.0 で削除予定）
+  - `remove_orphans` → `remove_unreferenced` に改名（pypdf 7.0.0 で削除予定）
+- 現状はテスト 4 件で警告として観測されるのみで動作には影響なし（`test_required_documents_succeeded` の合冊実行時に発生）。
 
 **やること**:
-1. 各 `test_*.py` を pytest 関数（`def test_<観点>(): assert ...`）へ書き換える。
-2. 共通のフィクスチャ（サンプル Excel パス、一時出力ディレクトリ等）を `tests/conftest.py` に集約する。
-3. 重い E2E ケース（PDF 実生成など）は `@pytest.mark.slow` 等でマークし、デフォルトでは除外できるようにする。
-4. `requirements-dev.txt` に既に `pytest>=8.0.0` を追加済みなので、CI ワークフロー（GitHub Actions 等）導入時はそれを利用する。
-5. 移行が一巡したら `pytest --collect-only` で 0 件にならないことを確認、READMEに実行手順を追記する。
+1. `pdf_merger.py:62` のキーワード引数を新名 (`remove_duplicates` / `remove_unreferenced`) に置換する。
+2. インストール済み pypdf のバージョンを確認し、新引数名がサポートされる最低バージョンを `requirements.txt` の `pypdf>=` に反映する（現状: `pypdf>=4.0.0` → 新名対応版へ引き上げ）。
+3. `tests/test_integration_merge.py` を再実行し、警告が消えることを確認する。
+4. CLAUDE.md ルールに従い `ORDER_DOCS_VERSION` を bump する（例: `2.3.20-pypdf-deprecation-fix`）。
 
-**先行確認タスク**:
-- 現状の `tests/test_*.py` がそれぞれ何を検証しようとしていたのか（成功条件、入力データ、期待出力）を 1 ファイルずつ洗い出す。これがないとリプレイス時に意図を取り違える。
+**注意点**:
+- pypdf 7 はまだ未リリース（2026-05 時点）だが、APIサーフェスは固まっている。早めの移行で 7.0 リリース後の破壊的変更を回避できる。
+- `compress_identical_objects` 自体は維持される。引数名のみの変更。
+
+---
+
+## Done
+
+### B-4. tests/ ディレクトリを pytest 形式へ移行 — 完了 (2026-05-04)
+
+**完了サマリ**:
+- 旧手動スクリプト 3 本 (`test_breakdown_html.py` / `test_condition_html.py` / `test_integration_merge.py`) を pytest 関数群に書換。
+- 純粋関数ユニットテスト 2 本を新規追加 (`test_construction_cost_reader.py` / `test_order_docs_helpers.py`、計 134 件)。
+- 既存出力 PDF を「正」として固定するスナップショットテスト (`test_pdf_snapshots.py`、13 件) を追加。
+- Excel 抽出回帰テスト (`test_excel_extraction.py`、18 件) を追加し、`extracted_vendors.json` を真値として全 11 フィールド × 5 業者を照合。
+- マーカー設計: `slow` / `requires_sample` / `requires_chromium` を `pyproject.toml` に登録、Chromium 不在時は自動 skip。
+- `tests/conftest.py` に共通 fixture (`sample_excel`, `pdf_html_dir`, `pdf_integration_dir` 等) を集約。
+- **最終結果: 181 passed / 0 failed (76 秒)**。`-m "not slow"` で軽量 165 件を 31 秒で実行可能。
+- コアロジック (`extractor.py` 等) は **1 行も変更せず**、現状を保存するテストの作成のみで完遂。
