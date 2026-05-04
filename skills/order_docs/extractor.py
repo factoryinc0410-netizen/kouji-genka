@@ -18,6 +18,13 @@ import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
 from . import config
+from .extractor_utils import (
+    _clean_amount,
+    _is_excel_serial,
+    _normalize,
+    _safe_float,
+    _safe_int,
+)
 from .nairaku_models import NairakuData, NairakuHeaderInfo, NairakuRow
 from .terms_models import TermsData, TermsItem, TermsParty, TermsSection
 
@@ -61,16 +68,6 @@ _CORPORATE_SUFFIXES = [
 #  ユーティリティ
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _normalize(text: str) -> str:
-    """全角→半角、空白・改行・ゼロ幅文字除去、括弧統一など揺れを吸収した比較用文字列を返す。"""
-    s = unicodedata.normalize("NFKC", text)
-    # 空白・改行・タブ・全角スペース・ノーブレークスペース・ゼロ幅文字を除去
-    s = re.sub(r"[\s\u3000\u00A0\u200B\u200C\u200D\uFEFF\r\n\t]+", "", s)
-    s = s.replace("（", "(").replace("）", ")")    # 全角丸括弧→半角
-    s = s.replace("【", "[").replace("】", "]")    # 全角隅付き→半角角括弧
-    return s
-
-
 def _extract_core_name(company: str) -> str:
     """
     法人格・空白を除去した「コアな名称」を返す。
@@ -91,20 +88,6 @@ def _extract_core_name(company: str) -> str:
 
 # Excel の日付シリアル値の起点: 1899-12-30
 _EXCEL_EPOCH = datetime(1899, 12, 30)
-
-
-def _is_excel_serial(value: Any) -> bool:
-    """値が Excel の日付シリアル値と思われるかを判定する。"""
-    if isinstance(value, (int, float)):
-        # 1900年〜2100年の範囲: シリアル値 1 ～ 73415
-        return 1 <= value <= 73415
-    if isinstance(value, str):
-        # 数字のみの文字列で5桁程度
-        stripped = value.strip()
-        if re.fullmatch(r"\d{4,6}", stripped):
-            num = int(stripped)
-            return 1 <= num <= 73415
-    return False
 
 
 def _serial_to_datetime(value: Any) -> datetime:
@@ -339,35 +322,6 @@ _KINGAKU_LABELS: dict[str, str] = {
 }
 
 
-def _clean_amount(raw: Any) -> str | None:
-    """
-    金額の生値をクリーニングして文字列で返す。
-    - 数値型 (int/float) はそのまま文字列化
-    - 文字列の場合はカンマ・円マーク・¥・スペースを除去して int 変換を試行
-    - 変換できなければ None
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)):
-        # 小数点以下がない場合は整数文字列に
-        if isinstance(raw, float) and raw == int(raw):
-            return str(int(raw))
-        return str(raw)
-    # 文字列の場合: カンマ・円・¥・スペースを除去
-    s = str(raw).strip()
-    s = re.sub(r"[,，、円¥￥\s\u3000]+", "", s)
-    if not s:
-        return None
-    try:
-        return str(int(s))
-    except ValueError:
-        try:
-            return str(int(float(s)))
-        except ValueError:
-            logger.warning("金額変換失敗: '%s' (元値: %s)", s, repr(raw))
-            return None
-
-
 def _extract_kingaku_direct(
     ws: Worksheet,
     base_col: int,
@@ -425,16 +379,6 @@ def _extract_kingaku_direct(
             del remaining[found_key]
 
     return result
-
-
-def _safe_int(s: str | None) -> int:
-    """金額文字列を安全に int に変換する。None/空/変換不可は 0 を返す。"""
-    if not s:
-        return 0
-    try:
-        return int(re.sub(r"[^\d\-]", "", s))
-    except ValueError:
-        return 0
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1885,21 +1829,6 @@ def _is_note_text(text: str) -> bool:
     """テキストが注記行のキーワードを含むか判定する。"""
     norm = _normalize(text)
     return any(_normalize(kw) in norm for kw in _NAIRAKU_NOTE_KEYWORDS)
-
-
-def _safe_float(value: Any) -> float | None:
-    """セル値を float に変換する。None / 空 / 変換不可は None。"""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    s = str(value).strip().replace(",", "").replace("，", "")
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
 
 
 def _detect_header_end_row(ws: Worksheet, max_scan: int = 15) -> int:
