@@ -1,11 +1,16 @@
 """
-extractor.py から切り出した純粋ユーティリティ関数群。
+extractor.py から切り出した低レベル共有ユーティリティ群。
 
-ここに置かれる関数は以下の条件をすべて満たす:
-  - クラスのインスタンス状態 (self) に依存しない
-  - openpyxl の Worksheet / Workbook を引数に取らない
-  - モジュール外部の可変状態 (グローバル変数, I/O) に依存しない
-  - 入力値のみで結果が決まる（同じ引数なら同じ結果）
+このモジュールは下記2グループから成る:
+
+  1) 純粋ユーティリティ — Worksheet/Workbook に依存せず、入力値のみで結果が決まる
+     関数（_normalize, _clean_amount, _format_wareki, _parse_kouki ...）。
+
+  2) Cell アクセスラッパー — Worksheet/Cell を引数に取るが、
+     Worksheet API を try/except で薄く包むだけのリーフユーティリティ
+     （_cell_str, _cell_raw, _cell_value_strip ...）。
+     extractor.py 以外（例: vml_utils.py）からも共有したいので、
+     循環 import を避けるためここに置く。
 
 extractor.py からは re-export することで、既存の
 `from skills.order_docs.extractor import _normalize` 等のインポートを
@@ -18,6 +23,8 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Any
+
+from openpyxl.worksheet.worksheet import Worksheet
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +156,90 @@ def _safe_float(value: Any) -> float | None:
         return float(s)
     except ValueError:
         return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Cell アクセスラッパー (Worksheet / Cell を薄く包むリーフ)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _cell_str(ws: Worksheet, row: int, col: int) -> str | None:
+    """セルの値を文字列で返す。空や None は None。
+
+    デフォルトでは前後空白を strip する（後方互換）。
+    内訳書のように先頭インデント・中間空白を保持したい場合は
+    `_cell_str_preserve()` を使用すること。
+    """
+    try:
+        val = ws.cell(row=row, column=col).value
+        if val is None:
+            return None
+        s = str(val).strip()
+        return s if s else None
+    except Exception:
+        return None
+
+
+def _cell_str_preserve(ws: Worksheet, row: int, col: int) -> str | None:
+    """セルの値を空白を保持したまま文字列で返す。
+
+    先頭の全角/半角空白（インデント）と中間空白（例: "土　工"）を
+    そのまま維持する。完全に空（None or "" のみ）の場合のみ None。
+
+    Excel 上で「見た目の余白」が意味を持つケース（内訳書の工種名等）で使う。
+    """
+    try:
+        val = ws.cell(row=row, column=col).value
+        if val is None:
+            return None
+        s = str(val)
+        # 完全空文字のみ None 扱い（rstrip せず "   " も保持する）
+        return s if s != "" else None
+    except Exception:
+        return None
+
+
+def _cell_raw(ws: Worksheet, row: int, col: int) -> Any:
+    """セルの生値を返す（数値比較や日付変換用）。"""
+    try:
+        return ws.cell(row=row, column=col).value
+    except Exception:
+        return None
+
+
+# `_cell_str` / `_cell_str_preserve` は (ws, row, col) インタフェースだが、
+# `ws.iter_rows(values_only=False)` から受け取る Cell を直接評価したい
+# 場合に使うバリアント。ws.cell() のランダムアクセスを排除できる。
+
+def _cell_value_preserve(cell: Any) -> str | None:
+    """Cell オブジェクトから空白を保持した文字列を返す。
+
+    `_cell_str_preserve` の Cell 版。先頭/中間空白を維持し、
+    完全空（None or ""）のみ None を返す。
+    iter_rows(values_only=False) の戻り値セルに対して使用する。
+    """
+    try:
+        val = cell.value
+    except Exception:
+        return None
+    if val is None:
+        return None
+    s = str(val)
+    return s if s != "" else None
+
+
+def _cell_value_strip(cell: Any) -> str | None:
+    """Cell オブジェクトから前後空白を strip した文字列を返す。
+
+    `_cell_str` の Cell 版。単位列など「空白が意味を持たない」列向け。
+    """
+    try:
+        val = cell.value
+    except Exception:
+        return None
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s if s else None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
