@@ -67,27 +67,15 @@
 
 ---
 
-## C-2. pypdf 6 系への移行に伴う非推奨警告の解消
-
-**現状** (2026-05-04 時点):
-- `skills/order_docs/pdf_merger.py:62` の `writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)` 呼び出しが、pypdf 6 系で 2 件の DeprecationWarning を出している。
-  - `remove_identicals` → `remove_duplicates` に改名（pypdf 7.0.0 で削除予定）
-  - `remove_orphans` → `remove_unreferenced` に改名（pypdf 7.0.0 で削除予定）
-- 現状はテスト 4 件で警告として観測されるのみで動作には影響なし（`test_required_documents_succeeded` の合冊実行時に発生）。
-
-**やること**:
-1. `pdf_merger.py:62` のキーワード引数を新名 (`remove_duplicates` / `remove_unreferenced`) に置換する。
-2. インストール済み pypdf のバージョンを確認し、新引数名がサポートされる最低バージョンを `requirements.txt` の `pypdf>=` に反映する（現状: `pypdf>=4.0.0` → 新名対応版へ引き上げ）。
-3. `tests/test_integration_merge.py` を再実行し、警告が消えることを確認する。
-4. CLAUDE.md ルールに従い `ORDER_DOCS_VERSION` を bump する（例: `2.3.20-pypdf-deprecation-fix`）。
-
-**注意点**:
-- pypdf 7 はまだ未リリース（2026-05 時点）だが、APIサーフェスは固まっている。早めの移行で 7.0 リリース後の破壊的変更を回避できる。
-- `compress_identical_objects` 自体は維持される。引数名のみの変更。
-
----
-
 ## Done
+
+### C-2. pypdf 6 系への移行に伴う非推奨警告の解消 — 完了 (2026-05-04)
+
+**完了サマリ**:
+- `skills/order_docs/pdf_merger.py:62` のキーワード引数を新名 (`remove_duplicates` / `remove_unreferenced`) に置換。
+- `requirements.txt` の `pypdf>=4.0.0` → `pypdf>=6.0.0` に引き上げ（インストール済み: 6.10.2）。
+- `ORDER_DOCS_VERSION` を `2.3.20-pypdf-deprecation-fix` に bump。
+- `pytest -m "not slow"` で **165 passed / 0 warnings** を確認（修正前は 4 warnings）。
 
 ### B-4. tests/ ディレクトリを pytest 形式へ移行 — 完了 (2026-05-04)
 

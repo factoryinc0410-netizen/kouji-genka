@@ -34,7 +34,7 @@ pandas>=2.2.0
 # Linux サーバ（さくらVPS等）で `pip install -r requirements.txt` が
 # 失敗しないよう PEP 508 environment marker でガードしている。
 pywin32>=306; sys_platform == 'win32'
-pypdf>=4.0.0
+pypdf>=6.0.0
 PyMuPDF>=1.24.0
 
 # === Optional (CLI monitoring - not required for web) ===

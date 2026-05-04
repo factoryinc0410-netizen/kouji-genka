@@ -59,7 +59,7 @@ def merge_pdfs(pdf_paths: list[Path], output_path: Path) -> Path:
             raise ValueError("結合可能な PDF が 1 つもありません")
 
         # 重複リソース除去 & ストリーム圧縮
-        writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+        writer.compress_identical_objects(remove_duplicates=True, remove_unreferenced=True)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(str(output_path), "wb") as f:
