@@ -8,3 +8,6 @@ ruff>=0.6.0
 
 # Test runner
 pytest>=8.0.0
+
+# Pre-commit hook framework (G-1)
+pre-commit>=4.0.0

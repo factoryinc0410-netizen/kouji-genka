@@ -1,0 +1,33 @@
+# Pre-commit hooks for dev-app (Phase G-1).
+# Install hooks into .git/hooks/ with: .venv/bin/pre-commit install
+#
+# Bypass (emergency only): git commit --no-verify
+#
+# Hooks:
+#   1. ruff           — lint changed Python files only (pass_filenames default)
+#   2. pytest-fast    — run the full non-slow test suite (pass_filenames: false)
+#   3. check-venv     — verify .venv consistency (B-1 recurrence prevention)
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        types_or: [python]
+
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest -m "not slow"
+        entry: .venv/bin/pytest -m "not slow" -q
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: check-venv
+        name: verify .venv consistency (B-1 recurrence guard)
+        entry: scripts/check_venv.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
