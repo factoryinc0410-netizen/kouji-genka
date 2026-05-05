@@ -74,12 +74,17 @@ Excel 抽出ロジックは責務別に 8 モジュールに分割済み。`extr
 
 ### 5.1 タスク完了時のバージョン更新（義務）
 - **各タスク（機能追加・修正）の完了時には、必ず該当するスキルのバージョンを更新すること。**
-- 更新先:
+- 更新先（2026-05-05 時点で全スキルが登録済み）:
   - 基盤 (Factoryskills 本体) の変更 → `web_app/core/versions.py` の `CORE_VERSION`
   - 注文書作成スキルの変更 → `skills/order_docs/config.py` の `ORDER_DOCS_VERSION`
-  - 他スキル追加時も同じく、スキル配下の `config.py` にバージョン定数を定義し、
-    `web_app/core/versions.py` の `SKILL_VERSIONS` に登録すること。
+  - 工事日報集計スキルの変更 → `skills/construction_cost/config.py` の `CONSTRUCTION_COST_VERSION`
+  - ファクトリーチャットの変更 → `chat/version.py` の `CHAT_VERSION`
+  - 新スキル追加時は、スキル配下にバージョン定数を定義し（FastAPI app 等の重い
+    モジュールとは別ファイルに置くこと）、`web_app/core/versions.py` の
+    `SKILL_VERSIONS` と `SKILL_DISPLAY_NAMES` の両方に登録する。
 - バージョン一覧はポータル画面下部に自動表示され、右下バッジには現在のスキルのバージョンが表示される。
+- `compound_cache_key()` が全バージョンを連結するため、どれか 1 つでも bump すれば
+  ブラウザキャッシュが自動破棄される。
 
 ### 5.2 バージョン命名規約
 - **セマンティック・バージョニング**（`MAJOR.MINOR.PATCH`）に従うこと。

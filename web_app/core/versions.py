@@ -23,12 +23,14 @@ CORE_VERSION: str = "1.1.0-linux-portability"
 # ── 各スキルのバージョン（スキル側の config.py から集約）──
 # スキルを追加したときは、ここにインポート文とエントリを増やすだけで
 # ポータルの一覧・キャッシュバスティング・バッジ表示に反映される。
+from chat.version import CHAT_VERSION  # noqa: E402
+from skills.construction_cost.config import CONSTRUCTION_COST_VERSION  # noqa: E402
 from skills.order_docs.config import ORDER_DOCS_VERSION  # noqa: E402
 
 SKILL_VERSIONS: dict[str, str] = {
     "order_docs": ORDER_DOCS_VERSION,
-    # 将来の追加例:
-    # "construction_cost": CONSTRUCTION_COST_VERSION,
+    "construction_cost": CONSTRUCTION_COST_VERSION,
+    "chat": CHAT_VERSION,
 }
 
 # ── スキルキー → UI 表示名 ─────────────────────────────────
@@ -36,6 +38,7 @@ SKILL_VERSIONS: dict[str, str] = {
 SKILL_DISPLAY_NAMES: dict[str, str] = {
     "order_docs": "注文書作成",
     "construction_cost": "工事日報集計",
+    "chat": "ファクトリーチャット",
     "core": "基盤",
 }
 

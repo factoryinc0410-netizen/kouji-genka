@@ -25,65 +25,33 @@
 
 ---
 
-## B-2. システム全体のバージョン定数の整備
-
-**現状** (2026-05-04 時点):
-- `skills/order_docs/config.py` には `ORDER_DOCS_VERSION` が定義され、CLAUDE.md ルール（変更時に必ず bump）にも組み込まれている。例: `2.3.19-unused-import-cleanup`
-- `web_app/core/versions.py` には `CORE_VERSION = "1.1.0-linux-portability"` が存在する。
-- 一方、`chat/`、`skills/construction_cost/` には対応するバージョン定数が**存在しない**。
-- そのため、これらモジュールの変更は SKILL_VERSIONS に反映されず、運用ログ・診断レポートからは「いつ何が変わったか」が追跡できない。
-
-**やること**:
-1. `chat/` 配下に `chat/version.py` または既存 `chat/backend/main.py` 内に `CHAT_VERSION = "1.0.0"` を導入。
-2. `skills/construction_cost/` 配下に `skills/construction_cost/config.py` の冒頭などに `CONSTRUCTION_COST_VERSION = "1.0.0"` を導入。
-3. 横断的なバージョンレジストリ（例: `web_app/core/versions.py` 内の `SKILL_VERSIONS = {...}`）に上記を登録し、UI の About 画面・診断 API でまとめて参照できるようにする。
-4. CLAUDE.md にこれら新規バージョンも「変更時 bump 必須」のルール対象として追記する。
-
-**バージョニング規則** (既存 ORDER_DOCS_VERSION 流儀):
-`MAJOR.MINOR.PATCH-<short-suffix>` 形式。`<short-suffix>` には変更内容を象徴するキーワード（例: `unused-import-cleanup`, `linux-portability`）を ASCII で短く記載。
-
----
-
-## D-1. 本番環境（prod-app）への安全なデプロイ
-
-**背景** (2026-05-05 時点):
-- Phase E + F のリファクタリングで `dev-app/skills/order_docs/extractor.py` が **3,126 → 413 行**まで縮小し、抽出ロジックは 8 モジュールに分散した。
-- ただし変更は **dev-app（`/home/ubuntu/dev-app/`）にのみ反映**されており、本番環境（`/home/ubuntu/prod-app/`、`factory-prod.service` で稼働）には未デプロイ。
-- ファイル数が大きく増えた（+7 モジュール）ため、安易な単純コピーでは移行漏れ・古いキャッシュ参照が起きやすい。
-
-**注**: このサーバの本番環境は `/home/ubuntu/prod-app/` + `factory-prod.service`（user=ubuntu）で稼働している。`deploy_linux/install_linux.sh` が想定する公式グリーンフィールド構成（`/opt/factoryskills/` + `factoryskills.service`）とは別系統である点に注意。
-
-**やること**:
-1. **デプロイ前検証（dev-app 側）**:
-   - `pytest -m "not slow"` 全件 (165 passed) を再確認。
-   - 1 件以上の実 Excel フィクスチャで `generate_from_excel` を end-to-end 走らせ、生成 PDF の目視確認 or スナップショットテストの再実行。
-   - `.venv` 配下の依存パッケージに dev/prod 差がないか `pip freeze | diff` で確認。
-2. **prod-app の現状把握**:
-   - 現在 prod に乗っているコミット SHA を `git -C /home/ubuntu/prod-app log -1` で控える（ロールバック用）。
-   - `systemctl status factory-prod` でサービス稼働状況・直近エラーを確認。
-3. **段階的デプロイ手順**:
-   - メンテ告知（必要なら）→ `sudo systemctl stop factory-prod`
-   - prod-app の `.git` で `git fetch devapp && git merge --ff-only devapp/main`（force push を含まない通常 fast-forward）
-   - 新規ファイル 7 つ（`extractor_utils.py`, `irai_scan_utils.py`, `nairaku_text_utils.py`, `nairaku_extraction.py`, `sheet_assignment_utils.py`, `terms_extraction.py`, `vml_utils.py`）の存在確認: `ls /home/ubuntu/prod-app/skills/order_docs/*_utils.py *_extraction.py vml_utils.py`
-   - `__pycache__` を全削除（古い re-export を残した .pyc を踏まないため）: `find /home/ubuntu/prod-app -name __pycache__ -type d -exec rm -rf {} +`
-   - `pip install -r requirements.txt` で依存ズレを是正（差分なければ skip 可）
-   - `sudo systemctl start factory-prod` → `journalctl -u factory-prod -f` でログ追跡
-   - `curl http://127.0.0.1:8000/health` の戻りを確認
-4. **本番動作確認**:
-   - 実依頼書 1 件で end-to-end 生成し、注文書/注文請書/内訳書/契約条件書/新旧対照表/約款の 6 書類すべてが PDF として生成されることを確認。
-   - 内訳書の **動的疑似結合**（A/B/C 列の長文自動結合）が PDF に正しく反映されているか確認。
-   - チェックボックス（VML 解析）が正しくスタンプされているか確認。
-5. **ロールバック準備**:
-   - 失敗時は `git checkout <旧 SHA>` → `__pycache__` 削除 → `sudo systemctl restart factory-prod` で即時復旧できることを事前にリハーサル。
-
-**リスク要因**:
-- 旧バージョンの `.pyc` が `__pycache__` に残ったまま新コードと混在すると `ImportError` ではなく **無音のロード失敗**を起こす可能性がある（特に re-export が消えたシンボル）。事前削除は必須。
-- prod-app 側で B-1 (venv シバン問題) が再燃していないか確認すること。`#!/usr/bin/env python3` 経由で実行するか、フルパスで `/home/ubuntu/prod-app/.venv/bin/python` を呼ぶこと。
-- `ORDER_DOCS_VERSION` を Phase E + F 用に bump しておく（例: `2.4.0-extractor-modularization`）。バッジで本番環境のバージョンが切り替わったことを目視確認できるようにする。
-
----
-
 ## Done
+
+### B-2. システム全体のバージョン定数の整備 — 完了 (2026-05-05)
+
+**完了サマリ**:
+- `skills/construction_cost/config.py` に `CONSTRUCTION_COST_VERSION = "1.0.0-initial-version"` を追加。
+- ファクトリーチャット用に `chat/version.py` を新規作成し、`CHAT_VERSION = "1.0.0-initial-version"` を定義（FastAPI app 初期化を巻き込まないよう独立モジュール化）。`chat/backend/main.py` からは re-export 目的で import。
+- `web_app/core/versions.py` の `SKILL_VERSIONS` / `SKILL_DISPLAY_NAMES` に両エントリを登録。`compound_cache_key()` が 4 バージョン (CORE + 3 スキル) を連結する形に拡張。
+- `skills/order_docs/CLAUDE.md` §5.1 に bump 対象として `CONSTRUCTION_COST_VERSION` / `CHAT_VERSION` を追記し、新スキル追加時の手順 (FastAPI app 等の重いモジュールとは別ファイルに置くこと) も明記。
+- スモークテスト: `compound_cache_key()` →
+  `1.1.0-linux-portability-2.4.0-extractor-modularization-1.0.0-initial-version-1.0.0-initial-version`。
+- これで「いつ何が変わったか」が UI バッジ・診断ログから常に追跡可能になる。
+
+### D-1. 本番環境 (prod-app) への安全なデプロイ — 完了 (2026-05-05)
+
+**完了サマリ**:
+- 事前準備として dev-app 側で `ORDER_DOCS_VERSION` を `2.4.0-extractor-modularization` に bump、サービス名の食い違い (`factoryskills` vs 実体 `factory-prod`) を BACKLOG.md / `skills/order_docs/CLAUDE.md` で訂正 (コミット `d7f6b2d`)。
+- 段階的デプロイを Phase 0 〜 9 で実行 (A 案：ユーザーが `!` プレフィックス経由で sudo コマンドを直接実行する形):
+  - Phase 0: dev-app pytest **165 passed** 確認、HEAD = `d7f6b2d`
+  - Phase 2: prod-app の現状コミット `94009e8` をロールバック点として記録
+  - Phase 3: `sudo systemctl stop factory-prod` → `git fetch devapp && git merge --ff-only devapp/main` で `94009e8..d7f6b2d` の 11 コミットを fast-forward 取り込み (17 ファイル変更、+3,522 / -3,114 行)
+  - Phase 4: `find /home/ubuntu/prod-app -name __pycache__ -type d -exec rm -rf {} +` で旧 .pyc を一掃
+  - Phase 8: `sudo systemctl start factory-prod` → ヘルスチェック `OK` で復帰
+  - Phase 9: end-to-end 動作確認に成功、エラーなく安定稼働
+- ロールバックは未発動 (移行は一発成功)。
+- 関連コミット: `d7f6b2d` (dev-app 側)、prod-app 側は `94009e8 → d7f6b2d` への fast-forward マージ。
+
 
 ### B-3. extractor.py のモジュール分割と構造整理 — 完了 (2026-05-05)
 

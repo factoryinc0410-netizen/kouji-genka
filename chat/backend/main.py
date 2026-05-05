@@ -15,6 +15,10 @@ from pydantic import BaseModel
 
 import aiosqlite
 
+# スキルバージョンは chat/version.py に独立管理（registry が
+# main.py を import すると FastAPI app の初期化まで巻き込まれるため）。
+from chat.version import CHAT_VERSION  # noqa: F401  # 本ファイル内では未使用だが re-export 目的
+
 # ── 設定 ──────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("FACTORY_CHAT_DB", "factory_chat.db")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")

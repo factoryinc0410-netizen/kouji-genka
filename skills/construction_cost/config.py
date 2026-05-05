@@ -3,6 +3,12 @@
 """
 from pathlib import Path
 
+# ── スキルバージョン ─────────────────────────────────────────
+# 工事日報集計スキルに変更を加えたら、このバージョンを必ず bump すること。
+# 命名規約は skills/order_docs/CLAUDE.md §5.2 と同じ:
+# MAJOR.MINOR.PATCH-<short-suffix> （ASCII 小文字＋ハイフン）
+CONSTRUCTION_COST_VERSION: str = "1.0.0-initial-version"
+
 SKILL_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = Path("web_app/outputs/construction_cost")
 
