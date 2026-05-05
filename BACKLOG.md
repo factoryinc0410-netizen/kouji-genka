@@ -1,95 +1,119 @@
-# BACKLOG — 技術負債・改善タスク
+# BACKLOG — 技術負債・改善・新機能タスク
 
-このファイルは、緊急性は低いが将来的に解消すべき技術負債・改善タスクを記録するものです。
-新しい課題は末尾に追記し、解消したものは `## Done` セクションに移動するか、コミット SHA を併記して残してください。
+このファイルは、現時点で着手可能なタスク（Phase G 候補）と、完了済みタスクの
+アーカイブをまとめます。
+
+新規タスクは末尾に追記、完了したものは `## 完了アーカイブ` の表に 1 行で集約し、
+詳細は当該コミットメッセージで参照すること（差分が大きいタスクは詳細サマリ節も残す）。
 
 ---
 
-## Done
+## 🚀 Phase G 候補（着手前）
 
-### B-1. venv シバン行が prod-app を参照する問題の根本修正 — 完了 (2026-05-05)
+2026-05-05 時点。dev-app と prod-app は同一コミット `028ceb7` で稼働中、`pytest -m "not slow"` → **165 passed**。
+ここから次に取り組む候補を 4 つ。各案の **目的 / 着手内容 / 想定リスク / 推定規模** を整理した。
 
-**根本原因の特定**:
-- `dev-app/.venv/pyvenv.cfg` を確認したところ、`command = /usr/bin/python3 -m venv /home/ubuntu/prod-app/.venv` となっており、**dev-app の venv は prod-app の venv をそのままコピーしたもの**であることが判明（仮説の `cp -r` ルートが正解）。
-- shebang はすでに `sed` 修正で dev-app を指していたが、pyvenv.cfg のメタデータは汚染されたまま放置されていた。
-- パッケージ構成は dev-app と prod-app で完全一致 (44 個) しており、機能的な実害はゼロだったが、再発リスクが残る状態だった。
+### G-1. CI/CD パイプラインの構築（運用コスト削減）
 
-**実施した修正**:
-1. 既存の `.venv` を `.venv.bak.B-1` にリネームしてバックアップ確保。
-2. `/usr/bin/python3 -m venv .venv` でクリーンに作り直し。pyvenv.cfg の `command` が `... /home/ubuntu/dev-app/.venv` になることを確認。
-3. `pip install --upgrade pip` で pip 24.0 → 26.1.1 に更新。
-4. `pip install -r requirements.txt -r requirements-dev.txt` で全依存を再インストール。
-5. パッケージ数が 44 個（旧 / prod-app と完全一致）であること、`pip list --format=freeze` の diff が空であることを確認。
-6. `pytest -m "not slow"` → **165 passed**。バックアップを削除して完了。
-7. Playwright Chromium は `~/.cache/ms-playwright/` に配置されており venv 外なので再ダウンロード不要だった。
+**目的**:
+現在は手動で `pytest -m "not slow"` を回している。プッシュ時・コミット時に自動実行する仕組みを入れることで、回帰検出を機械化し、人的ミスをゼロにする。
 
-**再発防止策**:
-- プロジェクト直下に `docs/setup.md` を新設し、「**venv は絶対に `cp -r` でコピーしない**、`python3 -m venv .venv` で各プロジェクト独自に作成する」ルールを明記。
-- セットアップ確認用のワンライナー（pyvenv.cfg の `command` 行が現在のプロジェクトを指していること）を同 docs に記載。
-- 関連コミット: `c5392cd`。
+**前提条件の確認結果** (2026-05-05):
+- dev-app には git remote が設定されていない（`git remote` 空）。devapp という名前で
+  prod-app をローカル参照しているのは prod-app 側だけ。
+- したがって GitHub Actions / Gitea Actions のようなクラウド型 CI は今すぐは使えない。
+- 当面は **ローカル・自動化** が現実解。将来 GitHub などに push する運用を始めたら CI を移植する。
 
+**着手内容**（ローカル CI 案）:
+1. **pre-commit hook**（軽量）: `.git/hooks/pre-commit` で `pytest -m "not slow" -q` を実行。失敗したら commit 拒否。`pre-commit` パッケージで管理してもよい（`.pre-commit-config.yaml`）。
+2. **systemd timer**（夜間フル）: `pytest`（slow 込み）+ ruff + pyvenv.cfg/shebang 検証ワンライナー（B-1 由来）を 1 日 1 回回し、結果を `journalctl` に記録。失敗時はメール / Slack 通知。
+3. **lint**: ruff（既に requirements-dev.txt 済み）を pre-commit と systemd timer の両方で走らせる。
+4. **将来の GitHub 移行**: remote 追加後、`.github/workflows/test.yml` を 1 ファイル追加するだけで CI クラウド側に切り替え可能な形にしておく。
 
-### B-2. システム全体のバージョン定数の整備 — 完了 (2026-05-05)
+**リスク**: 低。CI が落ちてもアプリ本番には無影響。pre-commit が誤検知すると commit が止まるので、`--no-verify` 抜け道だけ残す。
+**規模**: 小（半日）。ローカル運用なので構築は軽い。
 
-**完了サマリ**:
-- `skills/construction_cost/config.py` に `CONSTRUCTION_COST_VERSION = "1.0.0-initial-version"` を追加。
-- ファクトリーチャット用に `chat/version.py` を新規作成し、`CHAT_VERSION = "1.0.0-initial-version"` を定義（FastAPI app 初期化を巻き込まないよう独立モジュール化）。`chat/backend/main.py` からは re-export 目的で import。
-- `web_app/core/versions.py` の `SKILL_VERSIONS` / `SKILL_DISPLAY_NAMES` に両エントリを登録。`compound_cache_key()` が 4 バージョン (CORE + 3 スキル) を連結する形に拡張。
-- `skills/order_docs/CLAUDE.md` §5.1 に bump 対象として `CONSTRUCTION_COST_VERSION` / `CHAT_VERSION` を追記し、新スキル追加時の手順 (FastAPI app 等の重いモジュールとは別ファイルに置くこと) も明記。
-- スモークテスト: `compound_cache_key()` →
-  `1.1.0-linux-portability-2.4.0-extractor-modularization-1.0.0-initial-version-1.0.0-initial-version`。
-- これで「いつ何が変わったか」が UI バッジ・診断ログから常に追跡可能になる。
+---
 
-### D-1. 本番環境 (prod-app) への安全なデプロイ — 完了 (2026-05-05)
+### G-2. バックアップ自動化と監視（安全性）
 
-**完了サマリ**:
-- 事前準備として dev-app 側で `ORDER_DOCS_VERSION` を `2.4.0-extractor-modularization` に bump、サービス名の食い違い (`factoryskills` vs 実体 `factory-prod`) を BACKLOG.md / `skills/order_docs/CLAUDE.md` で訂正 (コミット `d7f6b2d`)。
-- 段階的デプロイを Phase 0 〜 9 で実行 (A 案：ユーザーが `!` プレフィックス経由で sudo コマンドを直接実行する形):
-  - Phase 0: dev-app pytest **165 passed** 確認、HEAD = `d7f6b2d`
-  - Phase 2: prod-app の現状コミット `94009e8` をロールバック点として記録
-  - Phase 3: `sudo systemctl stop factory-prod` → `git fetch devapp && git merge --ff-only devapp/main` で `94009e8..d7f6b2d` の 11 コミットを fast-forward 取り込み (17 ファイル変更、+3,522 / -3,114 行)
-  - Phase 4: `find /home/ubuntu/prod-app -name __pycache__ -type d -exec rm -rf {} +` で旧 .pyc を一掃
-  - Phase 8: `sudo systemctl start factory-prod` → ヘルスチェック `OK` で復帰
-  - Phase 9: end-to-end 動作確認に成功、エラーなく安定稼働
-- ロールバックは未発動 (移行は一発成功)。
-- 関連コミット: `d7f6b2d` (dev-app 側)、prod-app 側は `94009e8 → d7f6b2d` への fast-forward マージ。
+**目的**:
+- `chat/factory_chat.db`（SQLite）には会話履歴・ユーザーデータが入っている。失うと取り返せない。
+- `web_app/outputs/order_docs/` の生成 PDF も顧客提出済みの法的証跡。
+- factory-prod が落ちた・遅延している場合に**気づく仕組みがない**（現状は curl で人間が叩くまで）。
 
+**着手内容**:
+1. **DB 定期バックアップ**: cron で 1 日 1 回、`sqlite3 factory_chat.db ".backup /backup/factory_chat-$(date).db"` を実行 → ローテーション 30 日。
+2. **生成 PDF のローテーション**: outputs 配下を週次で tar + 圧縮、N 週間保持。
+3. **死活監視**: 5 分間隔で `curl http://127.0.0.1:8000/health` を叩く systemd timer。失敗 3 回連続で `journalctl` にエラー記録 → optionally メール / Slack webhook 通知。
+4. **ログローテーション**: `journalctl --vacuum-size=500M` を週次 cron で。
 
-### B-3. extractor.py のモジュール分割と構造整理 — 完了 (2026-05-05)
+**リスク**: 中。バックアップ先ディスク容量設計を間違えるとサービスが止まる。**事前にディスク容量設計が必須**。
+**規模**: 中（1 日）。
 
-**完了サマリ**:
-Phase E（Step 1 〜 8b、計 8 コミット）と Phase F（1 コミット）で完遂。
-- `skills/order_docs/extractor.py` を **3,126 行 → 413 行**（−87%）まで縮小。
-- 抽出ロジックを責務別に 7 つの新モジュールに分散:
-  - `extractor_utils.py` (421行): 純粋ユーティリティ + Cell ラッパー + `_banner`
-  - `irai_scan_utils.py` (240行): 依頼書スキャン + 金額抽出
-  - `nairaku_text_utils.py` (223行): 内訳書テキスト判定 + シート種別分類
-  - `nairaku_extraction.py` (1,010行): 内訳書抽出本体 + 補助ヘルパー
-  - `sheet_assignment_utils.py` (374行): 業者×シートのマッチング
-  - `terms_extraction.py` (313行): 契約条件書抽出 + 契約変更回数スキャン
-  - `vml_utils.py` (416行): 契約条件書テキスト + VML チェックボックス
-- Phase F で **re-export ハブを完全廃止**し、外部呼び出し元 7 ファイル（`generate_order_docs.py`, `web_app/routers/order_docs.py`, テスト 5 ファイル）を所有モジュールへの **直接 import** に切り替え。
-- 全期間を通じて `pytest -m "not slow"` → **165 passed**（回帰ゼロ）。
-- 提案時の懸念事項（外部参照の崩壊、PyMuPDF/Playwright のリソース管理）は **抽出系のみを対象とし**、PDF 生成・合冊系には一切触れずに完遂。
-- `SYSTEM_SPEC.md` §4 ディレクトリ構成 / §5.2 モジュール構成も同時に更新。
-- 関連コミット: `a2119ec` 〜 `a72af21`（10 コミット）。
+---
 
-### C-2. pypdf 6 系への移行に伴う非推奨警告の解消 — 完了 (2026-05-04)
+### G-3. 注文書スキルの UI/UX 改善（ビジネス価値）
 
-**完了サマリ**:
-- `skills/order_docs/pdf_merger.py:62` のキーワード引数を新名 (`remove_duplicates` / `remove_unreferenced`) に置換。
-- `requirements.txt` の `pypdf>=4.0.0` → `pypdf>=6.0.0` に引き上げ（インストール済み: 6.10.2）。
-- `ORDER_DOCS_VERSION` を `2.3.20-pypdf-deprecation-fix` に bump。
-- `pytest -m "not slow"` で **165 passed / 0 warnings** を確認（修正前は 4 warnings）。
+**目的**:
+注文書生成は本システムの主たる業務機能。UX 改善は直接的に作業時間削減に効く。
 
-### B-4. tests/ ディレクトリを pytest 形式へ移行 — 完了 (2026-05-04)
+**着手内容（候補から優先度の高いもの）**:
+1. **生成プログレスインジケータ**: 業者数 × 6 書類 = 最大 30 PDF を生成する間、ブラウザに「業者 3/5 を処理中」を表示。WebSocket または SSE。
+2. **抽出データの事前プレビュー**: PDF 生成前に「この内容で生成します」を画面表示し、業者名や工事名の typo に気づける機会を与える。
+3. **ドラッグ&ドロップ Excel アップロード**: 現在 input file ボタンであれば D&D ゾーンを追加。
+4. **エラー時の親切表示**: シート名不一致・金額抽出失敗等を一覧表示し、どのセルを直すべきかをサジェスト。
 
-**完了サマリ**:
-- 旧手動スクリプト 3 本 (`test_breakdown_html.py` / `test_condition_html.py` / `test_integration_merge.py`) を pytest 関数群に書換。
-- 純粋関数ユニットテスト 2 本を新規追加 (`test_construction_cost_reader.py` / `test_order_docs_helpers.py`、計 134 件)。
-- 既存出力 PDF を「正」として固定するスナップショットテスト (`test_pdf_snapshots.py`、13 件) を追加。
-- Excel 抽出回帰テスト (`test_excel_extraction.py`、18 件) を追加し、`extracted_vendors.json` を真値として全 11 フィールド × 5 業者を照合。
-- マーカー設計: `slow` / `requires_sample` / `requires_chromium` を `pyproject.toml` に登録、Chromium 不在時は自動 skip。
-- `tests/conftest.py` に共通 fixture (`sample_excel`, `pdf_html_dir`, `pdf_integration_dir` 等) を集約。
-- **最終結果: 181 passed / 0 failed (76 秒)**。`-m "not slow"` で軽量 165 件を 31 秒で実行可能。
-- コアロジック (`extractor.py` 等) は **1 行も変更せず**、現状を保存するテストの作成のみで完遂。
+**リスク**: 中。UI を触ると既存ユーザーの業務フローに影響する可能性。**段階的リリース推奨**。
+**規模**: 大（1 〜 2 週間）。1 〜 4 のうちどれを最初に取るかをユーザーに選んでもらう。
+
+---
+
+### G-4. 過去生成データの参照・再利用機能（新機能）
+
+**目的**:
+現在は注文書を生成すると PDF が outputs/ に出力されるだけで、UI 上での再参照・部分再生成ができない。実運用では「先月生成した注文書を再ダウンロードしたい」「業者名だけ間違えたので再発行したい」という要求が頻発するはず。
+
+**着手内容**:
+1. **生成履歴 DB**: `web_app/orders.db` などに「いつ・誰が・どの Excel から・どの PDF を生成したか」のメタデータを記録。
+2. **履歴一覧画面**: ポータルから「過去の生成」を辿って再ダウンロードできる UI。
+3. **部分再生成**: 履歴から「業者 3 だけ」「内訳書だけ」を再生成できるエンドポイント。
+4. **検索**: 工事名・業者名・期間で絞り込み。
+
+**リスク**: 中。新規 DB スキーマを作るのでマイグレーション設計が必要。
+**規模**: 大（2 〜 3 週間）。フェーズを切るのが妥当（まず履歴記録 → 一覧 → 再ダウンロード → 部分再生成）。
+
+---
+
+## 📊 候補比較サマリ
+
+| 案 | カテゴリ | 規模 | リスク | ビジネス価値 | 運用価値 | 推奨度 |
+|---|---|---|---|---|---|---|
+| G-1 CI/CD | 運用コスト | 中 | 低 | 低 | **高** | ★★★ 安全運用への一歩 |
+| G-2 バックアップ・監視 | 安全性 | 中 | 中 | 中 | **高** | ★★★ 失うとヤバい資産対策 |
+| G-3 UI/UX 改善 | ビジネス価値 | 大 | 中 | **高** | 中 | ★★ ユーザー満足度に直結 |
+| G-4 過去データ参照 | 新機能 | 大 | 中 | **高** | 中 | ★★ 新規データモデル設計が必要 |
+
+**おすすめの進め方**:
+- まず **G-1（CI/CD）** で安全網を張る（半日〜1 日で済むので軽い）
+- 次に **G-2（バックアップ・監視）** で資産を守る土台を作る
+- その上で **G-3 / G-4** という長期テーマに取り組む
+
+ご相談の上、どれから着手するかをご指示ください。
+
+---
+
+## 📦 完了アーカイブ
+
+すべての過去タスクの完了サマリは下表に集約。詳細は各コミットメッセージを参照のこと。
+
+| ID | タスク | 完了日 | 関連コミット |
+|---|---|---|---|
+| B-1 | venv シバン汚染の根本修正（`cp -r` 由来の `pyvenv.cfg` を作り直し）+ `docs/setup.md` 新設で再発防止 | 2026-05-05 | `c5392cd`, `028ceb7` |
+| B-2 | `CHAT_VERSION` (新規 `chat/version.py`) と `CONSTRUCTION_COST_VERSION` を導入し registry に登録 | 2026-05-05 | `3b55713` |
+| D-1 | 本番環境 prod-app への安全なデプロイ（Phase E + F の 11 コミットを fast-forward 反映、ロールバック未発動） | 2026-05-05 | `d7f6b2d`, prod 側 `94009e8 → d7f6b2d` |
+| B-3 | `extractor.py` モジュール分割（**3,126 行 → 413 行**、−87%）。8 モジュールへ責務分散、re-export ハブ廃止 | 2026-05-05 | `a2119ec`〜`a72af21`（10 コミット） |
+| C-2 | pypdf 6 系移行に伴う非推奨警告の解消（4 warnings → 0） | 2026-05-04 | `94009e8` |
+| B-4 | tests/ を pytest 形式に統一、スナップショット + 抽出回帰テスト追加（**181 passed**） | 2026-05-04 | `93b309f` |
+
+詳細サマリ（B-1, B-2, D-1, B-3）は git history で `git show <SHA>` を参照。

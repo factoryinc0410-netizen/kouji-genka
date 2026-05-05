@@ -18,7 +18,7 @@ from __future__ import annotations
 
 # ── 基盤 (Factoryskills 本体) のバージョン ─────────────────
 # FastAPI / ルーティング / 共通 UI など、スキル横断の基盤部分に関する変更で更新。
-CORE_VERSION: str = "1.1.0-linux-portability"
+CORE_VERSION: str = "1.2.0-skill-version-registry"
 
 # ── 各スキルのバージョン（スキル側の config.py から集約）──
 # スキルを追加したときは、ここにインポート文とエントリを増やすだけで
