@@ -10,9 +10,8 @@ extractor.py から切り出した「全シート × 全業者」のスコアリ
      (セル値ベース → シート名ベースのフォールバック)
   3. スコア降順で貪欲に「1シート=1業者」の排他的割り当て
 
-extractor.py からは re-export することで、既存の
-`from skills.order_docs.extractor import build_sheet_assignment` 等の
-インポートを壊さずに済む。
+外部からは `from skills.order_docs.sheet_assignment_utils import build_sheet_assignment`
+のように直接 import する。
 """
 from __future__ import annotations
 

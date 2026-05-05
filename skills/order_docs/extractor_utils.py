@@ -12,9 +12,8 @@ extractor.py から切り出した低レベル共有ユーティリティ群。
      extractor.py 以外（例: vml_utils.py）からも共有したいので、
      循環 import を避けるためここに置く。
 
-extractor.py からは re-export することで、既存の
-`from skills.order_docs.extractor import _normalize` 等のインポートを
-壊さずに済む。
+外部からは `from skills.order_docs.extractor_utils import _normalize`
+のように直接 import する。
 """
 from __future__ import annotations
 

@@ -41,7 +41,8 @@ def _read_all_text_normalized(pdf_path: Path) -> str:
 @pytest.fixture(scope="module")
 def generated_condition_pdfs(sample_excel: Path, tmp_path_factory) -> dict[str, Path]:
     """全業者の契約条件書を 1 度だけ生成して PDF パスマップを返す。"""
-    from skills.order_docs.extractor import extract_data, extract_terms_data
+    from skills.order_docs.extractor import extract_data
+    from skills.order_docs.terms_extraction import extract_terms_data
     from skills.order_docs.html_pdf_builder import HtmlPdfBuilder
 
     out_dir = tmp_path_factory.mktemp("condition_html")

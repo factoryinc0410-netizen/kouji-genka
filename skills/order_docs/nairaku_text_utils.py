@@ -9,9 +9,8 @@ extractor.py から切り出した、Excel I/O を伴わない純粋な
   - モジュール外部の可変状態 (グローバル変数, I/O) に依存しない
   - 入力値のみで結果が決まる
 
-extractor.py からは re-export することで、既存の
-`from skills.order_docs.extractor import _is_subtotal_text` 等の
-インポートを壊さずに済む。
+外部からは `from skills.order_docs.nairaku_text_utils import _is_subtotal_text`
+のように直接 import する。
 """
 from __future__ import annotations
 

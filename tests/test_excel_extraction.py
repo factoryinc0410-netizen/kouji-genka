@@ -87,7 +87,8 @@ class TestExtractData:
 # ────────────────────────────────────────────
 class TestExtractNairakuData:
     def test_returns_nairaku_data_for_first_vendor(self, sample_excel: Path):
-        from skills.order_docs.extractor import extract_data, extract_nairaku_data
+        from skills.order_docs.extractor import extract_data
+        from skills.order_docs.nairaku_extraction import extract_nairaku_data
         from skills.order_docs.nairaku_models import NairakuData
 
         vendors = extract_data(sample_excel)
@@ -102,7 +103,8 @@ class TestExtractNairakuData:
         assert nd.header is not None
 
     def test_all_assigned_vendors_have_nairaku_rows(self, sample_excel: Path):
-        from skills.order_docs.extractor import extract_data, extract_nairaku_data
+        from skills.order_docs.extractor import extract_data
+        from skills.order_docs.nairaku_extraction import extract_nairaku_data
 
         vendors = extract_data(sample_excel)
         for i, v in enumerate(vendors, start=1):
@@ -120,7 +122,8 @@ class TestExtractNairakuData:
 # ────────────────────────────────────────────
 class TestExtractTermsData:
     def test_returns_sections_for_first_vendor(self, sample_excel: Path):
-        from skills.order_docs.extractor import extract_data, extract_terms_data
+        from skills.order_docs.extractor import extract_data
+        from skills.order_docs.terms_extraction import extract_terms_data
         from skills.order_docs.terms_models import TermsData
 
         vendors = extract_data(sample_excel)
@@ -129,7 +132,8 @@ class TestExtractTermsData:
         assert len(td.sections) >= 1, "契約条件書のセクションが 0"
 
     def test_all_vendors_yield_terms_data(self, sample_excel: Path):
-        from skills.order_docs.extractor import extract_data, extract_terms_data
+        from skills.order_docs.extractor import extract_data
+        from skills.order_docs.terms_extraction import extract_terms_data
 
         vendors = extract_data(sample_excel)
         for i in range(1, len(vendors) + 1):

@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config
-from .extractor import extract_data, extract_nairaku_data, extract_terms_data
+from .extractor import extract_data
+from .nairaku_extraction import extract_nairaku_data
+from .terms_extraction import extract_terms_data
 from .html_pdf_builder import build_breakdown_pdf, build_condition_pdf
 from .pdf_stamper import stamp_pdf
 from .pdf_merger import merge_pdfs

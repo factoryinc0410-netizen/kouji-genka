@@ -58,7 +58,8 @@ def generated_breakdown_pdfs(sample_excel: Path, tmp_path_factory) -> dict[str, 
     dict[str, Path]
         {company_label: pdf_path}
     """
-    from skills.order_docs.extractor import extract_data, extract_nairaku_data
+    from skills.order_docs.extractor import extract_data
+    from skills.order_docs.nairaku_extraction import extract_nairaku_data
     from skills.order_docs.html_pdf_builder import (
         HtmlPdfBuilder, _patch_nairaku_contract_date,
     )

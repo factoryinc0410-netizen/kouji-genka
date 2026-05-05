@@ -1,138 +1,47 @@
 """
-Excel データ抽出モジュール — キーワード検索方式
+Excel データ抽出モジュール — メインオーケストレータ
 
-依頼書の行がユーザーにより挿入・削除されても追従できるよう、
-固定セル番地を使わず A列/B列 のキーワードで行番号を動的に特定する。
-業者は「列単位（横並び）」で配置されている前提。
+依頼書 (.xlsx) のメインシートからキーワード検索方式で各業者のデータを集約し、
+契約条件書からの共通項目および排他的シート割り当てを統合した結果を返す。
+
+固定セル番地を使わず A列/B列 のキーワードで行番号を動的に特定するため、
+依頼書の行がユーザーにより挿入・削除されても追従できる。
+
+抽出ロジックは責務別に下記モジュールへ分散し、ここでは extract_data から
+直接 import して呼び出す:
+  - extractor_utils         : _cell_str / _cell_raw / 日付パーサ / _safe_int
+  - irai_scan_utils         : 依頼書キーワード走査 + 金額抽出
+  - sheet_assignment_utils  : 業者×シートのマッチングと共通データ抽出
 """
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
 from . import config
 from .extractor_utils import (
-    _banner,
     _cell_raw,
     _cell_str,
-    _cell_str_preserve,
-    _cell_value_preserve,
-    _cell_value_strip,
-    _clean_amount,
-    _extract_core_name,
-    _format_wareki,
-    _is_excel_serial,
-    _normalize,
     _parse_contract_date,
     _parse_kouki,
-    _safe_float,
     _safe_int,
-    _serial_to_datetime,
 )
 from .irai_scan_utils import (
-    KINGAKU_KEYWORD_VARIANTS,
-    _KINGAKU_LABELS,
     _detect_vendor_base_cols,
     _extract_kingaku_direct,
     _find_sub_keyword_row,
     _scan_keyword_rows,
 )
-from .nairaku_extraction import (
-    MergedSpanCache,
-    _apply_dynamic_pseudo_merge,
-    _build_merged_cells_cache,
-    _compute_col_spans,
-    _detect_data_end_row,
-    _detect_header_end_row,
-    _is_merged_across_abc,
-    _resolve_col_spans,
-    apply_nairaku_page_padding,
-    extract_nairaku_data,
-)
-from .nairaku_models import NairakuData, NairakuHeaderInfo, NairakuRow
 from .sheet_assignment_utils import (
-    _SHEET_SCAN_MAX_COL,
-    _SHEET_SCAN_MAX_ROW,
     _extract_from_first_joken,
-    _find_related_sheets,
-    _match_score,
-    _sheet_contains_vendor,
     build_sheet_assignment,
-)
-from .nairaku_text_utils import (
-    NAIRAKU_ROWS_PER_PAGE,
-    _classify_sheet_type,
-    _count_indent,
-    _is_composite_footer_text,
-    _is_footer_terminator,
-    _is_note_text,
-    _is_subtotal_text,
-    _JOKEN_KEYWORDS,
-    _NAIRAKU_COMPOSITE_FOOTER_REQUIRED,
-    _NAIRAKU_FOOTER_TERMINATORS,
-    _NAIRAKU_HEADER_KEYWORDS,
-    _NAIRAKU_KEYWORDS,
-    _NAIRAKU_NOTE_KEYWORDS,
-    _NAIRAKU_SUBTOTAL_KEYWORDS,
-    _normalize_for_footer,
-    _row_contains_composite_footer,
-)
-from .terms_extraction import (
-    _TERMS_SECTIONS_SPEC,
-    _is_checked,
-    extract_terms_data,
-    scan_contract_change_count,
-)
-from .terms_models import TermsData, TermsItem, TermsParty, TermsSection
-from .vml_utils import (
-    _CHECKBOX_ROWS,
-    _VML_MOTOKATA_X,
-    _VML_ROW_BASE,
-    _VML_SECTION9_X,
-    _VML_SHITAUKE_X,
-    _VML_Y_BASE,
-    _VML_Y_STEP,
-    _extract_checkboxes_from_vml,
-    _find_keyword_row,
-    _read_adjacent_value,
-    _vml_y_to_row,
-    extract_joken_text_data,
 )
 
 logger = logging.getLogger(__name__)
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  分離済みモジュール (re-export はファイル先頭の import を参照)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#   extractor_utils.py        — 純粋ユーティリティ + Cell アクセスラッパー
-#                                (_normalize, _clean_amount, _format_wareki,
-#                                 _serial_to_datetime, _cell_str, _banner ...)
-#   irai_scan_utils.py        — 依頼書キーワード走査 + 金額抽出
-#                                (_detect_vendor_base_cols, _scan_keyword_rows,
-#                                 _extract_kingaku_direct, _KINGAKU_LABELS ...)
-#   nairaku_text_utils.py     — 内訳書のテキスト判定 + シート種別分類
-#                                (_classify_sheet_type, _is_subtotal_text,
-#                                 _is_footer_terminator, _NAIRAKU_*_KEYWORDS ...)
-#   nairaku_extraction.py     — 内訳書抽出の補助ヘルパー (Worksheet 走査)
-#                                (_detect_header_end_row, _detect_data_end_row,
-#                                 _build_merged_cells_cache, _resolve_col_spans,
-#                                 _apply_dynamic_pseudo_merge, MergedSpanCache ...)
-#   sheet_assignment_utils.py — 業者×シートのマッチングと割り当て
-#                                (build_sheet_assignment, _match_score,
-#                                 _extract_from_first_joken ...)
-#   vml_utils.py              — 契約条件書テキスト抽出 + VML チェックボックス
-#                                (extract_joken_text_data,
-#                                 _extract_checkboxes_from_vml ...)
-#   terms_extraction.py       — 契約条件書 (TermsData) 構造化抽出 +
-#                                依頼書からの契約変更回数スキャン
-#                                (extract_terms_data, scan_contract_change_count,
-#                                 _is_checked, _TERMS_SECTIONS_SPEC)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

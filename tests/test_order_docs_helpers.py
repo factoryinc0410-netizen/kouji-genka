@@ -10,25 +10,27 @@ from datetime import datetime
 
 import pytest
 
-from skills.order_docs.extractor import (
-    _classify_sheet_type,
+from skills.order_docs.extractor_utils import (
     _clean_amount,
-    _count_indent,
     _extract_core_name,
     _format_wareki,
-    _is_composite_footer_text,
     _is_excel_serial,
-    _is_footer_terminator,
-    _is_note_text,
-    _is_subtotal_text,
     _normalize,
-    _normalize_for_footer,
     _parse_contract_date,
     _parse_kouki,
-    _row_contains_composite_footer,
     _safe_float,
     _safe_int,
     _serial_to_datetime,
+)
+from skills.order_docs.nairaku_text_utils import (
+    _classify_sheet_type,
+    _count_indent,
+    _is_composite_footer_text,
+    _is_footer_terminator,
+    _is_note_text,
+    _is_subtotal_text,
+    _normalize_for_footer,
+    _row_contains_composite_footer,
 )
 
 

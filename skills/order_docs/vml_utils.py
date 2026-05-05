@@ -11,9 +11,8 @@ extractor.py から切り出した、VML（Vector Markup Language）解析と
   - 契約条件書シートからスタンプ用テキストデータを一括抽出
     （extract_joken_text_data）
 
-extractor.py からは re-export することで、既存の
-`from skills.order_docs.extractor import extract_joken_text_data` 等の
-インポートを壊さずに済む。
+外部からは `from skills.order_docs.vml_utils import extract_joken_text_data`
+のように直接 import する。
 """
 from __future__ import annotations
 
