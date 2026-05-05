@@ -5,27 +5,29 @@
 
 ---
 
-## B-1. venv シバン行が prod-app を参照する問題の根本修正
-
-**発覚経緯** (2026-05-04):
-- C-1 Phase B 着手時、`/home/ubuntu/dev-app/.venv/bin/pip install ruff` を実行したところ、出力に `Requirement already satisfied: ruff in /home/ubuntu/prod-app/.venv/...` と表示され、dev-app の venv ではなく prod-app の venv にインストールされようとしていることが判明した。
-- 原因は `dev-app/.venv/bin/pip` ほか複数のスクリプトの shebang が `#!/home/ubuntu/prod-app/.venv/bin/python3` を指していたため。
-- 暫定対処として `sed` で `dev-app/.venv/bin/` 配下を一括書き換えして復旧済み。
-
-**残課題**:
-1. なぜ dev-app の venv が prod-app を指すシバンを持っていたのか、構築手順を遡って根本原因を特定する。
-   - 仮説: prod-app から `cp -r` で複製された / 初期 `python -m venv` 実行時のインタプリタが prod-app 側だった、等。
-2. 再発防止策の確立:
-   - venv 再構築手順を README または `docs/setup.md` に明記する（`python3 -m venv .venv --clear` を使う等）。
-   - CI またはセットアップスクリプトに「シバンが現在のプロジェクトを指しているか」の検証ステップを追加。
-3. `dev-app/.venv/lib/python*/site-packages` の中に prod-app から流れ込んだ不整合パッケージがないかを `pip list` で突き合わせる。
-
-**運用上のワークアラウンド**（恒久対応までの間）:
-- venv 内のスクリプトを直接呼ばず、必ず `python -m pip` のようにモジュール経由で実行する（C-1 Phase B 以降のルール）。
-
----
-
 ## Done
+
+### B-1. venv シバン行が prod-app を参照する問題の根本修正 — 完了 (2026-05-05)
+
+**根本原因の特定**:
+- `dev-app/.venv/pyvenv.cfg` を確認したところ、`command = /usr/bin/python3 -m venv /home/ubuntu/prod-app/.venv` となっており、**dev-app の venv は prod-app の venv をそのままコピーしたもの**であることが判明（仮説の `cp -r` ルートが正解）。
+- shebang はすでに `sed` 修正で dev-app を指していたが、pyvenv.cfg のメタデータは汚染されたまま放置されていた。
+- パッケージ構成は dev-app と prod-app で完全一致 (44 個) しており、機能的な実害はゼロだったが、再発リスクが残る状態だった。
+
+**実施した修正**:
+1. 既存の `.venv` を `.venv.bak.B-1` にリネームしてバックアップ確保。
+2. `/usr/bin/python3 -m venv .venv` でクリーンに作り直し。pyvenv.cfg の `command` が `... /home/ubuntu/dev-app/.venv` になることを確認。
+3. `pip install --upgrade pip` で pip 24.0 → 26.1.1 に更新。
+4. `pip install -r requirements.txt -r requirements-dev.txt` で全依存を再インストール。
+5. パッケージ数が 44 個（旧 / prod-app と完全一致）であること、`pip list --format=freeze` の diff が空であることを確認。
+6. `pytest -m "not slow"` → **165 passed**。バックアップを削除して完了。
+7. Playwright Chromium は `~/.cache/ms-playwright/` に配置されており venv 外なので再ダウンロード不要だった。
+
+**再発防止策**:
+- プロジェクト直下に `docs/setup.md` を新設し、「**venv は絶対に `cp -r` でコピーしない**、`python3 -m venv .venv` で各プロジェクト独自に作成する」ルールを明記。
+- セットアップ確認用のワンライナー（pyvenv.cfg の `command` 行が現在のプロジェクトを指していること）を同 docs に記載。
+- 関連コミット: `<次のコミット SHA>`。
+
 
 ### B-2. システム全体のバージョン定数の整備 — 完了 (2026-05-05)
 
