@@ -44,13 +44,24 @@ Excel 抽出ロジックは責務別に 8 モジュールに分割済み。`extr
 - サーバー再起動: `restart_system.bat`
 
 ### 3.2 Linux (さくらVPS / Ubuntu / Debian)
+
+**注**: 本番環境のデプロイには 2 つの系統が存在する。サーバごとに使い分けること。
+
+#### 3.2.a 公式グリーンフィールド構成（新規 Linux サーバ向け）
+`deploy_linux/install_linux.sh` が想定する標準構成。`/opt/factoryskills/` 配下に専用ユーザー `factoryskills` で配置する。
 - 初回セットアップ: `sudo bash deploy_linux/install_linux.sh`
-- サーバー起動: `sudo systemctl start factoryskills`
-- サーバー停止: `sudo systemctl stop factoryskills`
-- サーバー再起動: `sudo systemctl restart factoryskills`
+- サーバー起動 / 停止 / 再起動: `sudo systemctl {start|stop|restart} factoryskills`
 - 状態確認: `sudo systemctl status factoryskills`
 - ログ追跡: `sudo journalctl -u factoryskills -f`
-- ヘルスチェック: `curl http://localhost:8000/health`
+
+#### 3.2.b 既存運用サーバ（このリポジトリの主たる本番環境）
+このマシンの prod-app は `/home/ubuntu/prod-app/` に配置され、`factory-prod.service`（user=ubuntu、venv=`~/prod-app/.venv`）で稼働中。
+- サーバー起動 / 停止 / 再起動: `sudo systemctl {start|stop|restart} factory-prod`
+- 状態確認: `sudo systemctl status factory-prod`
+- ログ追跡: `sudo journalctl -u factory-prod -f`
+
+#### 3.2.c 共通
+- ヘルスチェック: `curl http://127.0.0.1:8000/health`
 
 ### 3.3 OS 共通の注意
 - Linux サーバでは Excel COM が使えないため、`.xls` 入力は事前に `.xlsx` へ変換する運用とする。
