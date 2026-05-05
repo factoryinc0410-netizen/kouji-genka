@@ -44,30 +44,63 @@
 
 ---
 
-## B-3. extractor.py のモジュール分割と構造整理
+## D-1. 本番環境（prod-app）への安全なデプロイ
 
-**現状** (2026-05-04 時点):
-- `skills/order_docs/extractor.py` が **3,126 行** に肥大化しており、可読性・テスト容易性・差分レビューに支障が出始めている。
-- C-1 Phase D としてリファクタを検討したが、コアロジック（PDF生成・抽出・合冊処理）に直接触れるリスクが高いため別タスクとして切り出した。
+**背景** (2026-05-05 時点):
+- Phase E + F のリファクタリングで `dev-app/skills/order_docs/extractor.py` が **3,126 → 413 行**まで縮小し、抽出ロジックは 8 モジュールに分散した。
+- ただし変更は **dev-app（`/home/ubuntu/dev-app/`）にのみ反映**されており、`prod-app`（さくら VPS の `/opt/factoryskills/` または `/home/ubuntu/prod-app/`）には未デプロイ。
+- ファイル数が大きく増えた（+7 モジュール）ため、安易な単純コピーや `git pull` 一発では移行漏れ・古いキャッシュ参照が起きやすい。
 
-**やること**（提案、要再評価）:
-1. まず実際の責務単位で関数群をマッピングする。想定セクション:
-   - Excel/PDF 入力ローダ群
-   - 行・セルパース系のユーティリティ
-   - 帳票テンプレート別の抽出ロジック（種類ごとに分岐している関数）
-   - 合冊（ページ結合）パイプライン
-   - 出力フォーマッタ
-2. 上記を順に `skills/order_docs/extractor/` パッケージへ移動し、`__init__.py` で外部公開 API を維持する。
-3. 各分割モジュールに対する**最小限のスナップショットテスト**を `tests/order_docs/` に追加してから本格的な分割に着手する（後方互換性検証用）。
-4. 1 PR で全部やらず、ファイル分割 → 内部リファクタ の順で**コミットを細かく**切る。
+**やること**:
+1. **デプロイ前検証（dev-app 側）**:
+   - `pytest -m "not slow"` 全件 (165 passed) を再確認。
+   - 1 件以上の実 Excel フィクスチャで `generate_from_excel` を end-to-end 走らせ、生成 PDF の目視確認 or スナップショットテストの再実行。
+   - `.venv` 配下の依存パッケージに dev/prod 差がないか `pip freeze | diff` で確認。
+2. **prod-app の現状把握**:
+   - 現在 prod に乗っているコミット SHA を `git -C /opt/factoryskills log -1` などで控える（ロールバック用）。
+   - `systemctl status factoryskills` でサービス稼働状況・直近エラーを確認。
+3. **段階的デプロイ手順**:
+   - メンテ告知（必要なら）→ `systemctl stop factoryskills`
+   - prod-app の `.git` で `git fetch && git checkout <main の最新>`（force push を含まない通常 fast-forward）
+   - 新規ファイル 7 つ（`extractor_utils.py`, `irai_scan_utils.py`, `nairaku_text_utils.py`, `nairaku_extraction.py`, `sheet_assignment_utils.py`, `terms_extraction.py`, `vml_utils.py`）の存在確認: `ls /opt/factoryskills/skills/order_docs/*_utils.py *_extraction.py vml_utils.py`
+   - `__pycache__` を全削除（古い re-export を残した .pyc を踏まないため）: `find /opt/factoryskills -name __pycache__ -type d -exec rm -rf {} +`
+   - `pip install -r requirements.txt` で依存ズレを是正
+   - `systemctl start factoryskills` → `journalctl -u factoryskills -f` でログ追跡
+   - `curl http://localhost:8000/health` の戻りを確認
+4. **本番動作確認**:
+   - 実依頼書 1 件で end-to-end 生成し、注文書/注文請書/内訳書/契約条件書/新旧対照表/約款の 6 書類すべてが PDF として生成されることを確認。
+   - 内訳書の **動的疑似結合**（A/B/C 列の長文自動結合）が PDF に正しく反映されているか確認。
+   - チェックボックス（VML 解析）が正しくスタンプされているか確認。
+5. **ロールバック準備**:
+   - 失敗時は `git checkout <旧 SHA>` → `__pycache__` 削除 → `systemctl restart factoryskills` で即時復旧できることを事前にリハーサル。
 
-**注意点**:
-- 既存の絶対 import パス（`from skills.order_docs.extractor import xxx`）が外部から参照されているか grep で要確認。崩すと chat/ や web_app/ 側が壊れる。
-- 合冊処理周りは PyMuPDF + Playwright のリソース管理が絡むので触る順序に注意。
+**リスク要因**:
+- 旧バージョンの `.pyc` が `__pycache__` に残ったまま新コードと混在すると `ImportError` ではなく **無音のロード失敗**を起こす可能性がある（特に re-export が消えたシンボル）。事前削除は必須。
+- prod-app 側で B-1 (venv シバン問題) が再燃していないか確認すること。`#!/usr/bin/env python3` 経由で実行するか、フルパスで `/opt/factoryskills/.venv/bin/python` を呼ぶこと。
+- `ORDER_DOCS_VERSION` を Phase E + F 用に bump しておく（例: `2.4.0-extractor-modularization`）。バッジで本番環境のバージョンが切り替わったことを目視確認できるようにする。
 
 ---
 
 ## Done
+
+### B-3. extractor.py のモジュール分割と構造整理 — 完了 (2026-05-05)
+
+**完了サマリ**:
+Phase E（Step 1 〜 8b、計 8 コミット）と Phase F（1 コミット）で完遂。
+- `skills/order_docs/extractor.py` を **3,126 行 → 413 行**（−87%）まで縮小。
+- 抽出ロジックを責務別に 7 つの新モジュールに分散:
+  - `extractor_utils.py` (421行): 純粋ユーティリティ + Cell ラッパー + `_banner`
+  - `irai_scan_utils.py` (240行): 依頼書スキャン + 金額抽出
+  - `nairaku_text_utils.py` (223行): 内訳書テキスト判定 + シート種別分類
+  - `nairaku_extraction.py` (1,010行): 内訳書抽出本体 + 補助ヘルパー
+  - `sheet_assignment_utils.py` (374行): 業者×シートのマッチング
+  - `terms_extraction.py` (313行): 契約条件書抽出 + 契約変更回数スキャン
+  - `vml_utils.py` (416行): 契約条件書テキスト + VML チェックボックス
+- Phase F で **re-export ハブを完全廃止**し、外部呼び出し元 7 ファイル（`generate_order_docs.py`, `web_app/routers/order_docs.py`, テスト 5 ファイル）を所有モジュールへの **直接 import** に切り替え。
+- 全期間を通じて `pytest -m "not slow"` → **165 passed**（回帰ゼロ）。
+- 提案時の懸念事項（外部参照の崩壊、PyMuPDF/Playwright のリソース管理）は **抽出系のみを対象とし**、PDF 生成・合冊系には一切触れずに完遂。
+- `SYSTEM_SPEC.md` §4 ディレクトリ構成 / §5.2 モジュール構成も同時に更新。
+- 関連コミット: `a2119ec` 〜 `a72af21`（10 コミット）。
 
 ### C-2. pypdf 6 系への移行に伴う非推奨警告の解消 — 完了 (2026-05-04)
 

@@ -175,22 +175,40 @@ curl http://localhost:8000/health            # "OK" が返れば成功
 ```
 skills/order_docs/
 ├── __init__.py
-├── config.py                 # ★ 設定の単一真実源
-├── extractor.py              # Excel 抽出（共通 + 内訳書専用）
-├── nairaku_models.py         # 内訳書データクラス
-├── nairaku_builder.py        # Route B: ReportLab 動的 PDF 生成
-├── pdf_stamper.py            # Route A: PyMuPDF スタンプ
-├── pdf_merger.py             # Route C: pypdf 合冊
-├── generate_order_docs.py    # オーケストレータ（エントリポイント）
-├── generate_previews.py      # テンプレート確認用プレビュー生成
-├── gui_confirm.py            # CLI 用 Tkinter 確認ダイアログ
-├── office_com.py             # xls→xlsx 変換用（COM、残置）
-├── com_lock.py               # COM 呼び出し排他制御
-├── templates/                # PDF テンプレート + 元 Excel
-└── _deprecated/              # 廃止モジュール退避所
-    ├── README.md
-    └── libreoffice_converter.py   # v1.0 の LibreOffice 変換
+├── config.py                       # ★ 設定の単一真実源
+│
+│   ── 抽出パイプライン（Phase E + F でモジュール分割済み）──
+├── extractor.py                    # extract_data オーケストレータのみ (413 行)
+├── extractor_utils.py              # 純粋ユーティリティ + Cell ラッパー + _banner
+├── irai_scan_utils.py              # 依頼書キーワード走査 + 金額抽出
+├── nairaku_text_utils.py           # 内訳書テキスト判定 + シート種別分類
+├── nairaku_extraction.py           # 内訳書抽出本体 + 補助ヘルパー (extract_nairaku_data)
+├── sheet_assignment_utils.py       # 業者×シートのマッチングと割り当て
+├── terms_extraction.py             # 契約条件書 (TermsData) 構造化抽出 + 契約変更回数
+├── vml_utils.py                    # 契約条件書テキスト + VML チェックボックス (extract_joken_text_data)
+│
+│   ── データモデル ──
+├── nairaku_models.py               # 内訳書データクラス
+├── terms_models.py                 # 契約条件書データクラス
+│
+│   ── PDF 生成 / スタンプ / 合冊 ──
+├── html_pdf_builder.py             # Route B: HTML テンプレート + Playwright PDF 生成
+├── pdf_stamper.py                  # Route A: PyMuPDF スタンプ
+├── pdf_merger.py                   # Route C: pypdf 合冊
+│
+│   ── オーケストレータ / 周辺 ──
+├── generate_order_docs.py          # オーケストレータ（エントリポイント）
+├── generate_previews.py            # テンプレート確認用プレビュー生成
+├── gui_confirm.py                  # CLI 用 Tkinter 確認ダイアログ
+├── office_com.py                   # xls→xlsx 変換用（COM、残置）
+├── com_lock.py                     # COM 呼び出し排他制御
+└── templates/                      # PDF テンプレート + 元 Excel + HTML
 ```
+
+**抽出モジュール分割の経緯（Phase E + F、2026-05-04 〜 05）**:
+`extractor.py` は **3,126 行** に肥大化していたため、責務単位で 7 つの専用モジュールに切り出した（B-3 の完了タスク）。
+最終的に `extractor.py` は `extract_data` オーケストレータ **413 行**まで縮小（−87%）し、Phase F で re-export ハブの役割も解消。
+**外部からは各モジュールに直接 import するのが正規ルート**である（`from skills.order_docs.extractor import _normalize` のような旧式 import は機能しない）。
 
 ---
 
@@ -208,13 +226,27 @@ skills/order_docs/
 3. 6 書類の生成をルート A/B/C に振り分ける
 4. 合冊と結果集約
 
-### 5.2 `extractor.py` — Excel 抽出
+### 5.2 抽出パイプライン（8 モジュール構成）
 
-- `extract_data(excel_path) -> list[dict]`: 共通データ抽出
-- `extract_joken_text_data(excel_path, sheet) -> dict`: 契約条件書シートの追加データ
-- `extract_nairaku_data(excel_path, sheet) -> NairakuData`: 内訳書シートの構造化抽出（v2.0 新規）
+Phase E + F の分割により、抽出ロジックは責務単位で 8 モジュールに分散している。
+公開 API（外部から直接 import するエントリポイント）は **太字** で示す。
 
-`_SHEET_SCAN_MAX_ROW` 等のモジュール定数は `config.EXCEL_SCAN_LIMITS` から取得するよう変更済み。
+| モジュール | 役割 | 主な公開 API |
+|---|---|---|
+| `extractor.py` | メインオーケストレータ。依頼書スキャン・業者ループ・シート割り当てを統合する | **`extract_data(excel_path) -> list[dict]`** |
+| `extractor_utils.py` | 純粋ユーティリティ + Worksheet/Cell の薄ラッパー | `_normalize`, `_clean_amount`, `_format_wareki`, `_parse_contract_date`, `_parse_kouki`, `_serial_to_datetime`, `_cell_str`, `_cell_raw`, `_safe_int`, `_safe_float`, `_banner` |
+| `irai_scan_utils.py` | 依頼書（メインシート）のキーワード走査と金額抽出 | `_detect_vendor_base_cols`, `_scan_keyword_rows`, `_find_sub_keyword_row`, `_extract_kingaku_direct`, `KINGAKU_KEYWORD_VARIANTS` |
+| `nairaku_text_utils.py` | 内訳書のテキスト判定 + シート種別分類 | `_classify_sheet_type`, `_is_subtotal_text`, `_is_footer_terminator`, `_is_composite_footer_text`, `_count_indent`, `_normalize_for_footer`, `_NAIRAKU_*_KEYWORDS` |
+| `nairaku_extraction.py` | 内訳書抽出本体 + 補助ヘルパー（結合キャッシュ・列スパン解決・ページパディング） | **`extract_nairaku_data(excel_path, sheet) -> NairakuData`**, `apply_nairaku_page_padding`, `_build_merged_cells_cache`, `_resolve_col_spans`, `MergedSpanCache` |
+| `sheet_assignment_utils.py` | 業者×シートの貪欲マッチング・排他割り当て + 契約条件書共通データ抽出 | `build_sheet_assignment`, `_match_score`, `_extract_from_first_joken`, `_SHEET_SCAN_MAX_ROW`/`_COL` |
+| `terms_extraction.py` | 契約条件書 (`TermsData`) の構造化抽出 + 依頼書からの契約変更回数スキャン | **`extract_terms_data(excel_path, vendor_index) -> TermsData`**, `scan_contract_change_count`, `_is_checked` |
+| `vml_utils.py` | 契約条件書シートの全テキストデータ抽出 + VML チェックボックス解析 | **`extract_joken_text_data(excel_path, sheet) -> dict`**, `_extract_checkboxes_from_vml`, `_find_keyword_row`, `_read_adjacent_value` |
+
+**設計上の重要ポイント**:
+- `extractor.py` は **オーケストレータ専用**。`extract_data` の中で他モジュールを呼び出すだけで、自前のヘルパは持たない（Phase F で re-export を完全廃止）。
+- `extract_data` が呼び出すのは `extractor_utils`（`_cell_str`, `_cell_raw`, `_parse_contract_date`, `_parse_kouki`, `_safe_int`）/ `irai_scan_utils`（4 関数すべて）/ `sheet_assignment_utils`（`build_sheet_assignment`, `_extract_from_first_joken`）の **計 11 シンボル**のみ。
+- `_SHEET_SCAN_MAX_ROW` / `_COL` 等のモジュール定数は `config.EXCEL_SCAN_LIMITS` から取得する（変更箇所は `sheet_assignment_utils.py`）。
+- 外部から内部ヘルパが必要な場合（テスト等）は **必ず所有モジュールから直接 import する**。`from skills.order_docs.extractor import _normalize` のような旧スタイルは Phase F 後は機能しない。
 
 ### 5.3 `nairaku_models.py` — データモデル
 
@@ -501,6 +533,21 @@ NAIRAKU_LAYOUT = {
 - Pre-flight 検証を追加
 - マジックナンバーを `config.py` に完全集約（`FONT_FALLBACKS`, `EXCEL_SCAN_LIMITS`, `NAIRAKU_LAYOUT` 拡張）
 - `libreoffice_converter.py` を `_deprecated/` に退避
+
+### 11.1.1 Phase E + F: extractor.py のモジュール分割 (2026-05-04 〜 05)
+
+**動機**: `extractor.py` が **3,126 行**に肥大化していた（BACKLOG.md B-3）。
+
+**結果**:
+- 抽出ロジックを責務別に 7 つの新モジュールへ分散し、`extractor.py` は `extract_data` オーケストレータ **413 行**まで縮小（−87%）。
+- Phase F で re-export ハブを完全廃止。外部呼び出し元（`generate_order_docs.py`, `web_app/routers/order_docs.py`, `tests/` 配下 5 ファイル）を所有モジュールへの **直接 import** に切り替え。
+- 全期間を通じて `pytest -m "not slow"` → **165 passed**（回帰ゼロ）。
+- 詳細は §4 ディレクトリ構成 / §5.2 抽出パイプライン参照。
+- 関連コミット: `a2119ec` 〜 `a72af21`（10 コミット）。
+
+**外部 API 互換性**:
+- 公開 API（`extract_data`, `extract_nairaku_data`, `extract_terms_data`, `extract_joken_text_data`）は **すべて引き続き利用可能**。
+- ただし import 元は変わった。古い `from skills.order_docs.extractor import extract_nairaku_data` のような書き方は機能しない（`extract_data` 以外は所有モジュールから取得する）。
 
 ### 11.2 廃止済みモジュール
 

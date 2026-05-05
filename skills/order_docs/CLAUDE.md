@@ -9,6 +9,33 @@
 - バグ修正や機能追加を行う際は、必ず既存の `config.py` にある `PDF_STAMP_MAP` の仕組みを壊さないように実装すること。
 - Excelの抽出処理では、空行を詰めず `row` インデックスを厳密に保持すること。
 
+## 2.5. 抽出パイプラインのモジュール構成（Phase E + F 完了, 2026-05-05）
+
+Excel 抽出ロジックは責務別に 8 モジュールに分割済み。`extractor.py` は **オーケストレータ専用** で、re-export ハブの役割は持たない。
+新しい関数を追加するときや既存関数を修正するときは、下記のテーブルに従って **正しいモジュール** に置くこと。
+
+| モジュール | 役割 | 主な公開 API |
+|---|---|---|
+| `extractor.py` | メインオーケストレータ（`extract_data` のみ） | `extract_data` |
+| `extractor_utils.py` | 純粋ユーティリティ + Cell ラッパー + `_banner` | `_normalize` / `_clean_amount` / `_format_wareki` / `_parse_*` / `_cell_*` / `_safe_*` |
+| `irai_scan_utils.py` | 依頼書スキャン + 金額抽出 | `_detect_vendor_base_cols` / `_scan_keyword_rows` / `_find_sub_keyword_row` / `_extract_kingaku_direct` |
+| `nairaku_text_utils.py` | 内訳書テキスト判定 + シート種別分類 | `_classify_sheet_type` / `_is_subtotal_text` / `_is_footer_terminator` / `_count_indent` / `_NAIRAKU_*_KEYWORDS` |
+| `nairaku_extraction.py` | 内訳書抽出本体 + 補助ヘルパー | `extract_nairaku_data` / `apply_nairaku_page_padding` / `_build_merged_cells_cache` / `_resolve_col_spans` |
+| `sheet_assignment_utils.py` | 業者×シートのマッチング | `build_sheet_assignment` / `_match_score` / `_extract_from_first_joken` |
+| `terms_extraction.py` | 契約条件書構造化抽出 + 契約変更回数スキャン | `extract_terms_data` / `scan_contract_change_count` / `_is_checked` |
+| `vml_utils.py` | 契約条件書テキスト + VML チェックボックス | `extract_joken_text_data` / `_extract_checkboxes_from_vml` |
+
+**import 規則（厳守）**:
+- 外部呼び出し元（`generate_order_docs.py`, `web_app/`, `tests/`）は **所有モジュールから直接 import** する。
+  ```python
+  from skills.order_docs.extractor import extract_data
+  from skills.order_docs.nairaku_extraction import extract_nairaku_data
+  from skills.order_docs.terms_extraction import extract_terms_data
+  from skills.order_docs.vml_utils import extract_joken_text_data
+  ```
+- **禁止**: `from skills.order_docs.extractor import _normalize` のような旧 re-export 経由 import は Phase F で機能しなくなった。コミット前に必ず動作確認すること。
+- 詳細仕様は `SYSTEM_SPEC.md` §5.2「抽出パイプライン」を参照。
+
 ## 3. 主要コマンド
 
 ### 3.1 Windows
