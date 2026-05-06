@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# scripts/monitor_health.sh — liveness probe for dev-app (Phase G-2).
+# scripts/monitor_health.sh — liveness probe (Phase G-2).
 #
-# Hits http://127.0.0.1:8000/login. On any non-200 response (including
-# connection refused), appends a one-line record to ~/logs/health_error.log
-# AND posts a notification to LINE WORKS Incoming Webhook (if configured).
-# Stays silent when healthy so cron output stays clean.
+# Performs a GET against $HEALTH_URL (default: http://127.0.0.1:8000/login).
+# On any non-200 response (including connection refused), appends a one-line
+# record to ~/logs/health_error.log AND posts a notification to a LINE WORKS
+# Incoming Webhook (if configured). Stays silent when healthy.
 #
-# Webhook URL is read from $PROJECT_ROOT/.env at runtime:
-#     LINE_WORKS_WEBHOOK_URL=https://...
-# If the variable is unset, notification is skipped (down event still logged).
+# Environment variables:
+#   APP_NAME    label used in the log/notification message (default: dev-app)
+#   HEALTH_URL  endpoint to probe        (default: http://127.0.0.1:8000/login)
+#
+# Webhook URL is always read from this script's project root .env:
+#     /home/ubuntu/dev-app/.env  →  LINE_WORKS_WEBHOOK_URL=https://...
+# (single source of truth — dev and prod monitoring share the same channel).
+# If unset, the notification is skipped (the down event is still logged).
 #
 # Usage:
 #     ./scripts/monitor_health.sh
-#     # cron: */5 * * * * /home/ubuntu/dev-app/scripts/monitor_health.sh
+#     APP_NAME=prod-app HEALTH_URL=http://127.0.0.1:8000/login ./scripts/monitor_health.sh
 
 set -u
 
@@ -20,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_ROOT/.env"
 
+APP_NAME="${APP_NAME:-dev-app}"
 URL="${HEALTH_URL:-http://127.0.0.1:8000/login}"
 LOG_DIR="$HOME/logs"
 LOG_FILE="$LOG_DIR/health_error.log"
@@ -47,7 +53,7 @@ fi
 # ----- failure path: log + notify -----------------------------------------
 ts="$(date '+%Y-%m-%d %H:%M:%S')"
 host="$(hostname)"
-message="[$ts] dev-app DOWN host=$host url=$URL status=$status"
+message="[$ts] $APP_NAME DOWN host=$host url=$URL status=$status"
 echo "$message" >> "$LOG_FILE"
 
 # Read LINE_WORKS_WEBHOOK_URL from .env without sourcing the whole file.

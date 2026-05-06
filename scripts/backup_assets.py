@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
 """scripts/backup_assets.py — daily ZIP backup of critical assets (Phase G-2).
 
-Backs up the following files from $PROJECT_ROOT into ~/backups/assets_YYYYMMDD.zip:
+Backs up the following files from $BACKUP_PROJECT_ROOT into
+~/backups/$BACKUP_PREFIX_YYYYMMDD.zip:
     - web_app/data/app.db
     - chat/backend/factory_chat.db
     - .env
 
-Retention: 7 days. Older assets_*.zip files are deleted automatically.
+Environment variables:
+    BACKUP_PROJECT_ROOT  project to back up
+                         (default: this script's parent directory)
+    BACKUP_PREFIX        archive filename prefix
+                         (default: "assets")
+
+Retention: 7 days. Only archives matching $BACKUP_PREFIX_*.zip are pruned,
+so dev and prod backups don't interfere with each other's retention.
 
 Usage:
     python3 scripts/backup_assets.py
-    # cron: 0 3 * * * /home/ubuntu/dev-app/.venv/bin/python /home/ubuntu/dev-app/scripts/backup_assets.py
+    BACKUP_PROJECT_ROOT=/home/ubuntu/prod-app BACKUP_PREFIX=prod_assets \\
+        python3 scripts/backup_assets.py
 """
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
 import sys
 import zipfile
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(os.environ.get("BACKUP_PROJECT_ROOT", str(DEFAULT_PROJECT_ROOT))).resolve()
+PREFIX = os.environ.get("BACKUP_PREFIX", "assets")
+
 BACKUP_DIR = Path.home() / "backups"
 RETENTION_DAYS = 7
 
@@ -30,12 +43,13 @@ TARGETS = [
     Path(".env"),
 ]
 
-ARCHIVE_PATTERN = re.compile(r"^assets_(\d{8})\.zip$")
+# Pattern matches "<prefix>_YYYYMMDD.zip" for the configured prefix only.
+ARCHIVE_PATTERN = re.compile(rf"^{re.escape(PREFIX)}_(\d{{8}})\.zip$")
 
 
 def make_archive(today: dt.date) -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    archive_path = BACKUP_DIR / f"assets_{today:%Y%m%d}.zip"
+    archive_path = BACKUP_DIR / f"{PREFIX}_{today:%Y%m%d}.zip"
 
     missing: list[Path] = []
     included: list[Path] = []
@@ -52,6 +66,7 @@ def make_archive(today: dt.date) -> Path:
         archive_path.unlink(missing_ok=True)
         raise SystemExit(f"[backup] FAIL: none of {TARGETS} exist under {PROJECT_ROOT}")
 
+    print(f"[backup] project={PROJECT_ROOT} prefix={PREFIX}")
     print(f"[backup] wrote {archive_path} ({archive_path.stat().st_size:,} bytes)")
     for rel in included:
         print(f"[backup]   + {rel}")
