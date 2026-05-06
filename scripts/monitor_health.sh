@@ -67,9 +67,14 @@ if [ -z "$webhook_url" ]; then
 fi
 
 # JSON-escape the message text (backslash first, then double-quote).
+# Payload schema: legacy WorksMobile webhook (webhook.worksmobile.com) requires
+# {"body":{"text":"..."}} — verified empirically against the configured URL.
+# Other shapes ({"text":...}, {"type":"text","text":...}, etc.) all return
+# HTTP 400 "missing parameter (body.text)". The newer worksapis.com bot API
+# uses {"content":{"type":"text","text":"..."}} with OAuth — not used here.
 text="${message//\\/\\\\}"
 text="${text//\"/\\\"}"
-payload="{\"content\":{\"type\":\"text\",\"text\":\"$text\"}}"
+payload="{\"body\":{\"text\":\"$text\"}}"
 
 http_code="$(curl -s -o /dev/null \
     -w '%{http_code}' \
