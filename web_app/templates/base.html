@@ -26,23 +26,39 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/"><i class="bi bi-house-door me-1"></i>ホーム</a>
                     </li>
+                    {% if has_perm(user, 'order_docs', 'general') %}
                     <li class="nav-item">
                         <a class="nav-link" href="/orders/"><i class="bi bi-file-earmark-pdf me-1"></i>注文書作成</a>
                     </li>
+                    {% endif %}
+                    {% if has_perm(user, 'daily_report', 'general') %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="bi bi-calculator me-1"></i>工事日報集計
                         </a>
                         <ul class="dropdown-menu">
                             <li><a class="dropdown-item" href="/construction-cost/"><i class="bi bi-speedometer2 me-2"></i>ダッシュボード</a></li>
+                            <li><a class="dropdown-item" href="/construction-cost/history"><i class="bi bi-clock-history me-2"></i>処理履歴</a></li>
+                            {% if has_perm(user, 'daily_report', 'manager') %}
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="/construction-cost/sites"><i class="bi bi-building me-2"></i>現場マスタ管理</a></li>
                             <li><a class="dropdown-item" href="/construction-cost/workers"><i class="bi bi-people me-2"></i>作業員単価</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="/construction-cost/aggregate"><i class="bi bi-play-circle me-2"></i>集計処理</a></li>
-                            <li><a class="dropdown-item" href="/construction-cost/history"><i class="bi bi-clock-history me-2"></i>処理履歴</a></li>
+                            {% endif %}
                         </ul>
                     </li>
+                    {% endif %}
+                    {% if user.is_admin %}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-shield-lock me-1"></i>管理
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people-fill me-2"></i>ユーザー管理</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
                 </ul>
                 <div class="navbar-nav">
                     <span class="nav-link text-light">

@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import aiosqlite
 
 from web_app.core.config import UPLOAD_DIR, OUTPUT_DIR, MAX_UPLOAD_SIZE_MB
-from web_app.core.dependencies import db_dependency, get_current_user
+from web_app.core.dependencies import RequirePermission, db_dependency
 from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
 from web_app.services.job_queue import (
@@ -33,14 +33,23 @@ router = APIRouter(prefix="/orders", tags=["order_docs"])
 
 _ALLOWED_EXTENSIONS = {".xlsx", ".xls"}
 
+# 機能名 — user_permissions.feature_name と一致させること。
+# このルーター内のすべての権限ガードはこの値で評価される。
+_FEATURE_KEY = "order_docs"
+
+# Depends 用シングルトン。テスト側で dependency_overrides を貼る際にも
+# 同一インスタンスを参照することで一括差し替えできる。
+_RequireGeneral = RequirePermission(_FEATURE_KEY, "general")
+_RequireManager = RequirePermission(_FEATURE_KEY, "manager")
+
 
 @router.get("/", response_class=HTMLResponse)
 async def order_docs_page(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
     db: aiosqlite.Connection = Depends(db_dependency),
 ):
-    """注文書作成ツールのメイン画面。"""
+    """注文書作成ツールのメイン画面（自分のジョブ一覧 + アップロードフォーム）。"""
     jobs = await get_user_jobs(db, user["id"])
     return _templates.TemplateResponse(request, "order_docs/upload.html", {
         "user": user,
@@ -54,7 +63,7 @@ async def order_docs_page(
 async def upload_excel(
     request: Request,
     file: UploadFile = File(...),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireManager),
     db: aiosqlite.Connection = Depends(db_dependency),
 ):
     """
@@ -153,7 +162,7 @@ async def upload_excel(
 async def confirm_and_start(
     job_id: str,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireManager),
     db: aiosqlite.Connection = Depends(db_dependency),
 ):
     """
@@ -230,7 +239,7 @@ def _format_kouki(vendor: dict, prefix: str) -> str:
 @router.get("/{job_id}/status")
 async def job_status(
     job_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
     db: aiosqlite.Connection = Depends(db_dependency),
 ):
     """ジョブの現在のステータスを返す（ポーリング用）。"""
@@ -254,7 +263,7 @@ async def job_status(
 @router.get("/{job_id}/download")
 async def download_zip(
     job_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
     db: aiosqlite.Connection = Depends(db_dependency),
 ):
     """完成した ZIP ファイルをダウンロードする。"""

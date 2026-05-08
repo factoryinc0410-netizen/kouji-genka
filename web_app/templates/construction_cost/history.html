@@ -71,24 +71,33 @@
                         </td>
                         <td class="small">{{ log.confirmed_at or log.processed_at or '-' }}</td>
                         <td class="text-center">
-                            {% if log.output_site %}
-                            <a href="/construction-cost/aggregate/download/{{ log.target_month }}/{{ log.output_site.split('/')[-1] }}"
-                               class="btn btn-outline-primary btn-sm" title="現場別">
-                                <i class="bi bi-building"></i>
-                            </a>
-                            {% endif %}
-                            {% if log.output_worker %}
-                            <a href="/construction-cost/aggregate/download/{{ log.target_month }}/{{ log.output_worker.split('/')[-1] }}"
-                               class="btn btn-outline-primary btn-sm" title="個人別">
-                                <i class="bi bi-person"></i>
-                            </a>
-                            {% endif %}
-                            {% if not log.output_site and not log.output_worker %}
-                            <span class="text-muted">-</span>
+                            {# 集計結果ファイルのDLリンクは manager 権限が必要（aggregate/download エンドポイントが manager 必須） #}
+                            {% if has_perm(user, 'daily_report', 'manager') %}
+                                {% if log.output_site %}
+                                <a href="/construction-cost/aggregate/download/{{ log.target_month }}/{{ log.output_site.split('/')[-1] }}"
+                                   class="btn btn-outline-primary btn-sm" title="現場別">
+                                    <i class="bi bi-building"></i>
+                                </a>
+                                {% endif %}
+                                {% if log.output_worker %}
+                                <a href="/construction-cost/aggregate/download/{{ log.target_month }}/{{ log.output_worker.split('/')[-1] }}"
+                                   class="btn btn-outline-primary btn-sm" title="個人別">
+                                    <i class="bi bi-person"></i>
+                                </a>
+                                {% endif %}
+                                {% if not log.output_site and not log.output_worker %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted small" title="ダウンロードには manager 権限が必要です">
+                                    <i class="bi bi-lock-fill"></i>
+                                </span>
                             {% endif %}
                         </td>
                         <td class="text-center">
-                            {% if log.status == 'confirmed' %}
+                            {# 確定取り消しは破壊的操作のため manager 権限必須。
+                               権限なしのユーザーには操作列を「-」のみで表示する。 #}
+                            {% if log.status == 'confirmed' and has_perm(user, 'daily_report', 'manager') %}
                             <button type="button"
                                 class="btn btn-outline-danger btn-sm"
                                 onclick="openRollbackModal(

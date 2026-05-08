@@ -19,6 +19,9 @@ DEPARTMENTS = [
         "tools": [
             {
                 "id": "order_docs",
+                # feature : user_permissions.feature_name とつき合わせる権限キー。
+                # tool.id とは独立に管理する（id は表示用 ID、feature は権限用）。
+                "feature": "order_docs",
                 "name": "注文書自動作成",
                 "description": "Excel依頼書から注文書・注文請書PDFを一括生成します。",
                 "icon": "bi-file-earmark-pdf",
@@ -34,6 +37,7 @@ DEPARTMENTS = [
         "tools": [
             {
                 "id": "construction_cost",
+                "feature": "daily_report",
                 "name": "工事日報集計",
                 "description": "工事日報から現場別原価管理表・個人別集計表を作成し、予算と累計を管理します。",
                 "icon": "bi-calculator",

@@ -8,7 +8,17 @@
     <p class="text-muted">利用するツールを選択してください。</p>
 </div>
 
+{# 権限フィルタ: tool.id を feature_name とみなして general 以上の権限がある
+   ツールだけを表示する。可視ツール 0 件かつ「Coming Soon」プレースホルダ
+   の対象でもない部署はセクションごと非表示にする（空の見出しの羅列回避）。 #}
 {% for dept in departments %}
+{% set ns = namespace(visible_count=0) %}
+{% for tool in dept.tools %}
+  {% if has_perm(user, tool.feature, 'general') %}
+    {% set ns.visible_count = ns.visible_count + 1 %}
+  {% endif %}
+{% endfor %}
+{% if ns.visible_count > 0 or dept.tools | length == 0 %}
 <div class="department-section mb-5">
     <h4 class="department-header mb-3">
         <i class="bi {{ dept.icon }} me-2"></i>{{ dept.name }}
@@ -16,6 +26,7 @@
 
     <div class="row g-4">
         {% for tool in dept.tools %}
+        {% if has_perm(user, tool.feature, 'general') %}
         <div class="col-md-6 col-lg-4">
             <a href="{{ tool.url }}" class="text-decoration-none">
                 <div class="card tool-card h-100 shadow-sm border-0">
@@ -32,6 +43,7 @@
                 </div>
             </a>
         </div>
+        {% endif %}
         {% endfor %}
 
         {% if dept.tools | length == 0 %}
@@ -50,7 +62,18 @@
         {% endif %}
     </div>
 </div>
+{% endif %}
 {% endfor %}
+
+{# 全機能で権限なしのユーザーへの案内（管理者にもこれは出ないが、
+   none ユーザーが空のホームを見て困らないよう導線を提示する） #}
+{% if not has_perm(user, 'order_docs', 'general')
+   and not has_perm(user, 'daily_report', 'general') %}
+<div class="alert alert-info shadow-sm mt-3" role="alert">
+    <i class="bi bi-info-circle me-1"></i>
+    現在、利用できる機能がありません。管理者にお問い合わせいただき、機能ごとの権限設定を依頼してください。
+</div>
+{% endif %}
 
 {# ──────── バージョン情報（ポータル専用フッター） ────────
    基盤 (CORE) および各スキルのバージョンを一覧で表示する。

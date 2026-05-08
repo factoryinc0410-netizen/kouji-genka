@@ -17,9 +17,18 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from web_app.core.database import get_db
-from web_app.core.dependencies import get_current_user, require_admin
+from web_app.core.dependencies import RequirePermission
 from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
+
+# 機能名 — user_permissions.feature_name と一致させること。
+# このルーター内のすべての権限ガードはこの値で評価される。
+_FEATURE_KEY = "daily_report"
+
+# Depends 用シングルトン。テスト側で dependency_overrides を貼る際にも
+# 同一インスタンスを参照することで一括差し替えできる。
+_RequireGeneral = RequirePermission(_FEATURE_KEY, "general")
+_RequireManager = RequirePermission(_FEATURE_KEY, "manager")
 
 from skills.construction_cost.reader import read_daily_sheets, normalize_str
 from skills.construction_cost.aggregator import aggregate
@@ -281,7 +290,7 @@ async def _build_dashboard_data(db, target_month: str | None = None) -> list[dic
 async def dashboard(
     request: Request,
     month: str | None = None,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
 ):
     """工事日報集計ダッシュボード — 現場別の予算・原価消化状況一覧。"""
     # クエリパラメータ month のバリデーション（YYYY-MM 形式のみ受け付ける）
@@ -327,7 +336,7 @@ async def dashboard(
 async def dashboard_export(
     request: Request,
     month: str | None = None,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
 ):
     """ダッシュボードの内容を階層構造のExcelファイルとしてダウンロードする。"""
     # クエリパラメータ month のバリデーション
@@ -366,7 +375,7 @@ async def dashboard_export(
 @router.get("/monthly/sites", response_class=HTMLResponse)
 async def monthly_sites(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
 ):
     """現場ごとの月別集計ビュー。"""
     db = await get_db()
@@ -400,7 +409,7 @@ async def monthly_sites(
 @router.get("/monthly/workers", response_class=HTMLResponse)
 async def monthly_workers(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
 ):
     """作業員ごとの月別集計ビュー。"""
     db = await get_db()
@@ -460,7 +469,7 @@ async def monthly_workers(
 @router.get("/groups", response_class=HTMLResponse)
 async def groups_page(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     msg: str = "",
     cat: str = "success",
 ):
@@ -477,7 +486,7 @@ async def groups_page(
 @router.post("/groups/add")
 async def groups_add(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     group_name: str = Form(...),
     display_order: int = Form(0),
 ):
@@ -507,7 +516,7 @@ async def groups_add(
 @router.post("/groups/update")
 async def groups_update(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     group_id: int = Form(...),
     group_name: str = Form(...),
     display_order: int = Form(0),
@@ -551,7 +560,7 @@ async def groups_update(
 @router.get("/sites", response_class=HTMLResponse)
 async def sites_page(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     msg: str = "",
     cat: str = "success",
 ):
@@ -585,7 +594,7 @@ async def sites_page(
 @router.post("/sites/add")
 async def sites_add(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     site_name: str = Form(...),
     budget: float = Form(0),
     initial_cumulative_cost: float = Form(0),
@@ -635,7 +644,7 @@ async def sites_add(
 @router.post("/sites/update")
 async def sites_update(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     site_id: int = Form(...),
     site_name: str = Form(...),
     initial_cumulative_cost: float = Form(0),
@@ -733,7 +742,7 @@ async def sites_update(
 @router.post("/sites/delete")
 async def sites_delete(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     site_id: int = Form(...),
 ):
     db = await get_db()
@@ -758,7 +767,7 @@ async def sites_delete(
 @router.get("/workers", response_class=HTMLResponse)
 async def workers_page(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     msg: str = "",
     cat: str = "success",
 ):
@@ -776,7 +785,7 @@ async def workers_page(
 @router.post("/workers/add")
 async def workers_add(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     worker_name: str = Form(...),
     role: str = Form(""),
     group_name: str = Form(""),
@@ -812,7 +821,7 @@ async def workers_add(
 @router.post("/workers/update")
 async def workers_update(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     worker_id: int = Form(...),
     worker_name: str = Form(...),
     role: str = Form(""),
@@ -843,7 +852,7 @@ async def workers_update(
 @router.post("/workers/delete")
 async def workers_delete(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     worker_id: int = Form(...),
 ):
     db = await get_db()
@@ -868,10 +877,13 @@ async def workers_delete(
 @router.get("/template/download")
 async def template_download(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireGeneral),
     target_month: str = "",
 ):
-    """DBの最新マスタを反映したプルダウン付き日報テンプレートを生成・ダウンロードする。"""
+    """DBの最新マスタを反映したプルダウン付き日報テンプレートを生成・ダウンロードする。
+
+    日報入力作業の一部であり一般利用者も日常的に使うため、general 権限で許可する。
+    """
     # クエリパラメータ target_month のバリデーション（YYYY-MM 形式以外は破棄）
     # build_template への伝搬と Content-Disposition への埋め込みを遮断する
     if target_month:
@@ -919,7 +931,7 @@ async def template_download(
 @router.get("/aggregate", response_class=HTMLResponse)
 async def aggregate_page(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     msg: str = "",
     cat: str = "success",
 ):
@@ -931,7 +943,7 @@ async def aggregate_page(
 @router.post("/aggregate", response_class=HTMLResponse)
 async def aggregate_run(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     target_month: str = Form(...),
     file: UploadFile = File(...),
 ):
@@ -1053,7 +1065,7 @@ async def aggregate_run(
 @router.post("/aggregate/confirm")
 async def aggregate_confirm(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
     log_id: str = Form(...),
 ):
     """集計結果を確認後、累計金額を確定更新する。draft → confirmed に遷移。"""
@@ -1148,7 +1160,7 @@ async def aggregate_confirm(
 async def aggregate_download(
     target_month: str,
     filename: str,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
 ):
     """集計結果Excelのダウンロード。"""
     # safe_file_response がパス検証（OUTPUT_BASE 配下に収まっているか）と
@@ -1169,7 +1181,7 @@ async def aggregate_download(
 @router.get("/history", response_class=HTMLResponse)
 async def history_page(
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(_RequireGeneral),
     msg: str = "",
     cat: str = "success",
 ):
@@ -1244,7 +1256,7 @@ async def history_page(
 async def rollback_log(
     log_id: int,
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireManager),
 ):
     """確定済み集計ログのロールバック（確定取り消し）。
 

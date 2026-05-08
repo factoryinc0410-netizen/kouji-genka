@@ -6,19 +6,19 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from web_app.core.config import SECRET_KEY, HOST, PORT
 from web_app.core.database import init_db
 from web_app.core.auth import create_user, verify_password
 from web_app.core.database import get_db
-from web_app.core.dependencies import RequiresLoginException
+from web_app.core.dependencies import RequiresLoginException, RequiresPasswordChangeException
 from web_app.services.worker import start_worker, stop_worker
 from web_app.services.job_queue import restore_pending_jobs
 from web_app.services.cleanup import start_cleanup_scheduler
-from web_app.routers import auth, portal, order_docs, construction_cost
+from web_app.routers import auth, portal, order_docs, construction_cost, admin_users
 
 logger = logging.getLogger("web_app")
 
@@ -213,6 +213,7 @@ app.include_router(auth.router)
 app.include_router(portal.router)
 app.include_router(order_docs.router)
 app.include_router(construction_cost.router)
+app.include_router(admin_users.router)
 
 
 # ── ヘルスチェック ────────────────────────────────────────────
@@ -235,3 +236,60 @@ async def head_root():
 @app.exception_handler(RequiresLoginException)
 async def redirect_to_login(request: Request, exc: RequiresLoginException):
     return RedirectResponse(url="/login", status_code=303)
+
+
+# ── 強制パスワード変更時のリダイレクトハンドラ ────────────────
+@app.exception_handler(RequiresPasswordChangeException)
+async def redirect_to_change_password(
+    request: Request, exc: RequiresPasswordChangeException
+):
+    return RedirectResponse(url="/auth/change-password", status_code=303)
+
+
+# ── 403 Forbidden の HTML ハンドラ ─────────────────────────────
+# RequirePermission や verify_csrf_token / require_admin が送出する
+# 403 を、ブラウザ(Accept: text/html) からのリクエストに限り簡易な
+# HTML ページに差し替える。API クライアント等にはデフォルトの JSON
+# レスポンス（{"detail": "..."}）をそのまま返す。
+
+def _wants_html(request: Request) -> bool:
+    """Accept ヘッダから HTML を要求しているかを判定する。"""
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 403 and _wants_html(request):
+        # マークアップ最小限の自前ページ。ナビ等を出すためにテンプレート
+        # 描画するとさらに依存が広がるので、ここでは静的に組み立てる。
+        detail = exc.detail or "この操作を行う権限がありません。"
+        body = f"""<!doctype html>
+<html lang=\"ja\"><head><meta charset=\"utf-8\">
+<title>403 Forbidden — Factoryskills</title>
+<link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\" rel=\"stylesheet\">
+<link href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css\" rel=\"stylesheet\">
+</head><body class=\"bg-light\">
+<div class=\"container py-5\" style=\"max-width: 640px;\">
+  <div class=\"card shadow-sm\">
+    <div class=\"card-body\">
+      <h1 class=\"h4 text-danger mb-3\">
+        <i class=\"bi bi-shield-exclamation me-2\"></i>権限がありません (403)
+      </h1>
+      <p class=\"mb-3\">{detail}</p>
+      <p class=\"text-muted small mb-4\">
+        この機能を利用するには管理者にお問い合わせください。
+      </p>
+      <a href=\"/\" class=\"btn btn-primary\">
+        <i class=\"bi bi-house-door me-1\"></i>ホームへ戻る
+      </a>
+    </div>
+  </div>
+</div></body></html>"""
+        return HTMLResponse(content=body, status_code=403)
+    # それ以外は FastAPI 既定動作と同等に JSON で返す
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )

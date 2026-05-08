@@ -1,5 +1,7 @@
 {# 工事日報集計 共通タブナビゲーション #}
 {# 使い方: {% set active_tab = "dashboard" %} {% include "construction_cost/_nav.html" %} #}
+{# 権限: manager 専用タブは has_perm(user,'daily_report','manager') でガード。
+   general ユーザーには「ダッシュボード」「履歴」のみ表示する。 #}
 <ul class="nav nav-tabs">
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}"
@@ -7,6 +9,7 @@
             <i class="bi bi-speedometer2 me-1"></i>ダッシュボード
         </a>
     </li>
+    {% if has_perm(user, 'daily_report', 'manager') %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'sites' %}active{% endif %}"
            href="/construction-cost/sites">
@@ -31,6 +34,7 @@
             <i class="bi bi-calculator me-1"></i>集計処理
         </a>
     </li>
+    {% endif %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'history' %}active{% endif %}"
            href="/construction-cost/history">

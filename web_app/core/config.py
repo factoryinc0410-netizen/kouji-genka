@@ -31,6 +31,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # デフォルト False（HTTP のローカル開発を壊さないため）。
 SESSION_COOKIE_SECURE: bool = _env_bool("SESSION_COOKIE_SECURE", False)
 
+# ── ブルートフォース対策（アカウントロックアウト） ───────────
+# LOGIN_MAX_FAILURES 回連続で失敗すると LOGIN_LOCKOUT_MINUTES 分間ロックする。
+# ログイン成功で失敗カウンタはリセットされる。
+LOGIN_MAX_FAILURES: int = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
+LOGIN_LOCKOUT_MINUTES: int = int(os.getenv("LOGIN_LOCKOUT_MINUTES", "15"))
+
 # ── サーバー設定 ──────────────────────────────────────────────
 HOST: str = os.getenv("HOST", "127.0.0.1")
 PORT: int = int(os.getenv("PORT", "8000"))

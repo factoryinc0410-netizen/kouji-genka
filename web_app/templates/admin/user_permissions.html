@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ target.username }} の権限設定 — Factoryskills{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 flex-wrap gap-2">
+  <a href="/admin/users" class="btn btn-link text-decoration-none px-0">
+    <i class="bi bi-arrow-left me-1"></i>一覧へ戻る
+  </a>
+  <h2 class="ms-3 mb-0">
+    <i class="bi bi-shield-lock me-2"></i>権限設定
+  </h2>
+</div>
+
+{# ── 対象ユーザーの基本情報 ── #}
+<div class="card shadow-sm mb-3" style="max-width: 720px;">
+  <div class="card-body py-2 d-flex align-items-center flex-wrap gap-3">
+    <div>
+      <div class="text-muted small">対象ユーザー</div>
+      <div class="fs-5"><code>{{ target.username }}</code> <span class="text-muted">/ {{ target.display_name }}</span></div>
+    </div>
+    <div class="ms-auto">
+      {% if target.is_admin %}
+        <span class="badge bg-warning text-dark"><i class="bi bi-shield-check me-1"></i>管理者</span>
+      {% else %}
+        <span class="badge bg-light text-dark border">一般</span>
+      {% endif %}
+      {% if target.is_active %}
+        <span class="badge bg-success ms-1">有効</span>
+      {% else %}
+        <span class="badge bg-secondary ms-1">無効</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── フラッシュ ── #}
+{% for f in flashes %}
+<div class="alert alert-{{ f.category }} alert-dismissible fade show shadow-sm" role="alert">
+  <div>{{ f.message|safe }}</div>
+  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{% endfor %}
+
+{% if target.is_admin %}
+<div class="alert alert-info shadow-sm" style="max-width: 720px;">
+  <i class="bi bi-info-circle me-1"></i>
+  対象ユーザーは <strong>管理者権限</strong> を保持しているため、
+  ここで設定する機能別の権限に関わらず全機能を利用できます。
+  機能別権限を実際に効かせるには、まず管理者権限を外してください。
+</div>
+{% endif %}
+
+<div class="card shadow-sm" style="max-width: 720px;">
+  <div class="card-body">
+    <form method="post" action="/admin/users/{{ target.id }}/permissions" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      {% for f in features %}
+      <fieldset class="mb-4 pb-3 {% if not loop.last %}border-bottom{% endif %}">
+        <legend class="fs-6 fw-bold mb-1">
+          <i class="bi bi-puzzle me-1"></i>{{ f.label }}
+          <code class="ms-2 small text-muted">{{ f.key }}</code>
+        </legend>
+        <p class="text-muted small mb-2">{{ f.description }}</p>
+
+        <div class="d-flex flex-wrap gap-3">
+          {% for level_key, level_label in level_labels %}
+          <div class="form-check">
+            <input class="form-check-input" type="radio"
+                   name="feature__{{ f.key }}"
+                   id="feature__{{ f.key }}__{{ level_key }}"
+                   value="{{ level_key }}"
+                   {% if f.current_level == level_key %}checked{% endif %}>
+            <label class="form-check-label" for="feature__{{ f.key }}__{{ level_key }}">
+              {% if level_key == "none" %}
+                <span class="badge bg-light text-dark border">{{ level_label }}</span>
+              {% elif level_key == "general" %}
+                <span class="badge bg-primary">{{ level_label }}</span>
+              {% elif level_key == "manager" %}
+                <span class="badge bg-warning text-dark">{{ level_label }}</span>
+              {% else %}
+                {{ level_label }}
+              {% endif %}
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endfor %}
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-check-lg me-1"></i>保存
+        </button>
+        <a href="/admin/users" class="btn btn-outline-secondary">
+          キャンセル
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<p class="text-muted small mt-3 mb-0" style="max-width: 720px;">
+  <i class="bi bi-info-circle me-1"></i>
+  権限レベルは <strong>manager &gt; general &gt; none</strong> の階層関係です。
+  各エンドポイントでは「最低限必要なレベル」を要求しており、上位レベルは下位レベルの操作も常に可能です。
+  変更した機能のみ監査ログ（操作種別: 権限変更）に記録されます。
+</p>
+{% endblock %}
