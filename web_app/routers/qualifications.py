@@ -34,6 +34,10 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
+# request.form() が返すのは Starlette の UploadFile (FastAPI の UploadFile は
+# そのサブクラスだが、form() は親クラスを返すので isinstance チェックには
+# Starlette 側を使う必要がある)。
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 import csv
 import io
@@ -1036,6 +1040,182 @@ async def edit_submit(
     logger.info(
         "qualifications certificate 更新: cert_id=%d user=%s",
         cert_id, user.get("username"),
+    )
+    return RedirectResponse(url="/qualifications/", status_code=303)
+
+
+# ────────────────────────────────────────────
+# 手動追加 (Phase 3.3) — OCR をスキップして 1 件だけ即時登録する
+# ────────────────────────────────────────────
+#
+# 使い所:
+#   - OCR の信頼度が極端に低く candidates が空になるケース
+#   - 紙のコピーが手元になく、手入力で台帳だけ起こしたいケース
+#   - classify を回さずに先に 1 件だけ登録したいケース
+#
+# upload (OCR フロー) との違い:
+#   - q_upload_jobs を作らない
+#   - 即座に q_certificates(status='confirmed') を作る
+#   - ファイル添付は任意。あれば <UPLOAD_DIR>/qualifications/manual_<uuid>/ に保存
+
+@router.get("/manual-add", response_class=HTMLResponse)
+async def manual_add_page(
+    request: Request,
+    user: dict = Depends(require_admin),
+):
+    """手動追加フォームを表示する。admin のみ。"""
+    db = await get_db()
+    try:
+        workers      = await _fetch_workers(db)
+        quals_master = await _fetch_qualifications_master(db)
+        pending_count = await _count_active_jobs(db)
+    finally:
+        await db.close()
+
+    return _templates.TemplateResponse(
+        request,
+        "qualifications/manual_add.html",
+        {
+            "user": user,
+            "skill_key": _SKILL_KEY,
+            "active_tab": "manual_add",
+            "workers": workers,
+            "qualifications_master": quals_master,
+            "pending_count": pending_count,
+            "max_file_mb": QUALIFICATIONS_MAX_FILE_MB,
+            "max_files": QUALIFICATIONS_MAX_FILES_PER_UPLOAD,
+        },
+    )
+
+
+@router.post("/manual-add")
+async def manual_add_submit(
+    request: Request,
+    user: dict = Depends(require_admin),
+):
+    """手動追加フォームを処理する。
+
+    - OCR/レビューはスキップし、即座に ``status='confirmed'`` で q_certificates へINSERT
+    - ファイルは任意。添付されたものはステージングディレクトリに保存し
+      ``original_files_json`` にパスを記録する
+    - 必須: ``worker_id`` (>0), ``qualification_name``, ``issued_on``
+    """
+    form = await request.form()
+
+    qual_name = (form.get("qualification_name", "") or "").strip()
+    category  = (form.get("category", "") or "").strip()
+    try:
+        worker_id = int(form.get("worker_id", "") or "0")
+    except ValueError:
+        worker_id = 0
+    certificate_no = (form.get("certificate_no", "") or "").strip() or None
+    issuer         = (form.get("issuer", "") or "").strip() or None
+    issued_on      = (form.get("issued_on", "") or "").strip() or None
+    expires_on     = (form.get("expires_on", "") or "").strip() or None
+    notes          = (form.get("notes", "") or "").strip() or None
+    renewal_required = (form.get("renewal_required", "") == "1")
+
+    if worker_id <= 0:
+        raise HTTPException(status_code=400, detail="作業員を選択してください")
+    if not qual_name:
+        raise HTTPException(status_code=400, detail="資格名は必須です")
+    if not issued_on:
+        raise HTTPException(status_code=400, detail="交付日は必須です")
+
+    # ── 任意ファイルの保存 ──
+    # form.getlist("files") は Starlette UploadFile を返すので一度集約してから検証する。
+    raw_files = [
+        f for f in form.getlist("files")
+        if isinstance(f, StarletteUploadFile) and (f.filename or "").strip()
+    ]
+
+    max_bytes = QUALIFICATIONS_MAX_FILE_MB * 1024 * 1024
+    if len(raw_files) > QUALIFICATIONS_MAX_FILES_PER_UPLOAD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"添付できるのは {QUALIFICATIONS_MAX_FILES_PER_UPLOAD} 枚までです",
+        )
+
+    contents: list[tuple[str, bytes]] = []
+    for f in raw_files:
+        original_name = f.filename or "unnamed"
+        if not is_allowed_extension(original_name):
+            raise HTTPException(
+                status_code=400,
+                detail=f"非対応のファイル形式です: {original_name}（PDF/JPG/PNG のみ）",
+            )
+        data = await f.read()
+        if len(data) == 0:
+            raise HTTPException(
+                status_code=400, detail=f"空ファイルです: {original_name}",
+            )
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{original_name} がサイズ上限 "
+                    f"{QUALIFICATIONS_MAX_FILE_MB} MB を超えています"
+                ),
+            )
+        contents.append((original_name, data))
+
+    # ファイルを保存し original_files_json を組み立てる
+    original_paths: list[str] = []
+    if contents:
+        # upload と同じ命名スキーム ("qualifications/<id>/<name>") に揃える。
+        # OCR ジョブと区別するため id には ``manual_`` プレフィックスを付ける。
+        manual_id = f"manual_{uuid.uuid4().hex}"
+        staging = staging_dir_for(manual_id)
+        used_names: set[str] = set()
+        try:
+            for original_name, data in contents:
+                base = sanitize_filename(original_name)
+                unique = base
+                n = 1
+                while unique in used_names:
+                    stem, _, ext = base.rpartition(".")
+                    unique = f"{stem}_{n}.{ext}" if ext else f"{base}_{n}"
+                    n += 1
+                used_names.add(unique)
+                target = staging / unique
+                target.write_bytes(data)
+                original_paths.append(f"qualifications/{manual_id}/{unique}")
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    db = await get_db()
+    try:
+        qual_id = await _ensure_qualification(db, qual_name, category)
+        cur = await db.execute(
+            """
+            INSERT INTO q_certificates (
+                worker_id, qual_id, certificate_no, issuer,
+                issued_on, expires_on, renewal_required,
+                notes, status, original_files_json,
+                ocr_raw_json, ocr_confidence, ocr_model,
+                created_by, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?,
+                    ?, 'confirmed', ?,
+                    NULL, NULL, NULL, ?,
+                    datetime('now','localtime'), datetime('now','localtime'))
+            """,
+            (
+                worker_id, qual_id, certificate_no, issuer,
+                issued_on, expires_on, 1 if renewal_required else 0,
+                notes, _json_dumps(original_paths),
+                user["id"],
+            ),
+        )
+        cert_id = int(cur.lastrowid)
+        await db.commit()
+    finally:
+        await db.close()
+
+    logger.info(
+        "qualifications manual-add: cert_id=%d worker=%d qual=%s files=%d user=%s",
+        cert_id, worker_id, qual_name, len(contents), user.get("username"),
     )
     return RedirectResponse(url="/qualifications/", status_code=303)
 

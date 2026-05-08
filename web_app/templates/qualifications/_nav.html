@@ -26,6 +26,12 @@
         </a>
     </li>
     <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'manual_add' %}active{% endif %}"
+           href="/qualifications/manual-add">
+            <i class="bi bi-plus-square me-1"></i>手動追加
+        </a>
+    </li>
+    <li class="nav-item">
         {# 資格マスタ管理は Phase 2 で実装予定 #}
         <a class="nav-link disabled" aria-disabled="true"
            title="Phase 2 で実装予定">
