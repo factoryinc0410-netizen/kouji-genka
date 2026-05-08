@@ -98,6 +98,20 @@ MAX_JOBS_PER_USER: int = int(os.getenv("MAX_JOBS_PER_USER", "4"))
 # ジョブ処理タイムアウト（秒）— デフォルト 10 分
 JOB_TIMEOUT_SECONDS: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "600"))
 
+# ── 期限アラートメール通知 (qualifications) ───────────────────
+# scripts/send_expiration_alerts.py を cron から実行する際に参照される。
+# SMTP_SERVER が空のままなら通知は無効化扱い（収集だけ走らせて終了）。
+SMTP_SERVER: str = os.getenv("SMTP_SERVER", "")
+SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER: str = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+# True の場合 SMTP 接続後 starttls() を呼ぶ。587 ポートでの一般的な構成。
+SMTP_USE_TLS: bool = _env_bool("SMTP_USE_TLS", True)
+# 送信元アドレス（ヘッダ "From")。
+ALERT_EMAIL_FROM: str = os.getenv("ALERT_EMAIL_FROM", "")
+# 宛先（ヘッダ "To"）。複数指定はカンマ区切り。
+ALERT_EMAIL_TO: str = os.getenv("ALERT_EMAIL_TO", "")
+
 # ── ディレクトリ自動作成 ──────────────────────────────────────
 for _dir in (DATABASE_PATH.parent, UPLOAD_DIR, OUTPUT_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
