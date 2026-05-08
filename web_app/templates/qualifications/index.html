@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}資格者証管理 — Factoryskills{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item active">資格者証管理</li>
+        </ol>
+    </nav>
+    <h3><i class="bi bi-patch-check-fill me-2 text-primary"></i>資格者証管理</h3>
+    <p class="text-muted mb-0">作業員ごとの資格者証を一元管理し、有効期限の近接 (180/60/30 日) を可視化します。</p>
+</div>
+
+{% include "qualifications/_nav.html" %}
+
+<div class="mt-4"></div>
+
+{# ── 期限サマリ (4 stat-cards) ─────────────────────────────────── #}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <a href="/qualifications/" class="text-decoration-none">
+            <div class="card shadow-sm h-100 border-secondary border-opacity-25">
+                <div class="card-body py-3">
+                    <div class="text-muted small mb-1">
+                        <i class="bi bi-list-ul me-1"></i>全件
+                    </div>
+                    <div class="fs-3 fw-bold text-dark">{{ summary.total }}</div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm h-100 border-success border-opacity-50">
+            <div class="card-body py-3">
+                <div class="text-success small mb-1">
+                    <i class="bi bi-check-circle-fill me-1"></i>有効 (>180日)
+                </div>
+                <div class="fs-3 fw-bold text-success">{{ summary.safe }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm h-100 border-warning border-opacity-50">
+            <div class="card-body py-3">
+                <div class="text-warning small mb-1">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>期限近接 (180日以内)
+                </div>
+                <div class="fs-3 fw-bold text-warning">{{ summary.warning }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm h-100 border-danger border-opacity-50">
+            <div class="card-body py-3">
+                <div class="text-danger small mb-1">
+                    <i class="bi bi-x-circle-fill me-1"></i>期限切れ
+                </div>
+                <div class="fs-3 fw-bold text-danger">{{ summary.expired }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── 一覧テーブル ──────────────────────────────────────────────── #}
+<div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-table me-1"></i>資格者証一覧
+            <span class="badge bg-secondary ms-1">{{ certificates|length }}</span>
+        </span>
+        {% if user.is_admin %}
+        <span class="text-muted small">
+            <i class="bi bi-info-circle me-1"></i>アップロード機能は Phase 2 で追加予定
+        </span>
+        {% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover mb-0 align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>作業員</th>
+                        <th>所属</th>
+                        <th>資格</th>
+                        <th>交付番号</th>
+                        <th>交付日</th>
+                        <th>有効期限</th>
+                        <th class="text-center">残日数</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in certificates %}
+                    <tr>
+                        <td class="fw-bold">{{ c.worker_name }}</td>
+                        <td class="small text-muted">{{ c.group_name or '-' }}</td>
+                        <td>
+                            {{ c.qual_name }}
+                            {% if c.qual_category %}
+                            <span class="badge bg-light text-dark border ms-1 small">{{ c.qual_category }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">{{ c.certificate_no or '-' }}</td>
+                        <td class="small">{{ c.issued_on or '-' }}</td>
+                        <td class="small">{{ c.expires_on or '-' }}</td>
+                        <td class="text-center">
+                            {% if c.bucket == 'safe' %}
+                                <span class="badge bg-success"><i class="bi bi-check2 me-1"></i>有効</span>
+                            {% elif c.bucket == 'far' %}
+                                <span class="badge bg-info text-dark">残 180 日以内</span>
+                            {% elif c.bucket == 'soon' %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle me-1"></i>残 60 日以内</span>
+                            {% elif c.bucket == 'urgent' %}
+                                <span class="badge bg-warning"><i class="bi bi-exclamation-triangle-fill me-1"></i>残 30 日以内</span>
+                            {% elif c.bucket == 'expired' %}
+                                <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>期限切れ</span>
+                            {% else %}
+                                <span class="badge bg-secondary">更新不要</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if certificates|length == 0 %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-5">
+                            <i class="bi bi-inbox display-6 d-block mb-2"></i>
+                            まだ資格者証は登録されていません。
+                            {% if user.is_admin %}
+                            <div class="mt-2 small">
+                                Phase 2 でアップロード機能が有効になると、PDF/画像から AI OCR で自動起票できます。
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

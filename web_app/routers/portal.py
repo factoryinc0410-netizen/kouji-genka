@@ -48,6 +48,21 @@ DEPARTMENTS = [
         "icon": "bi-house-door",
         "tools": [],
     },
+    {
+        "id": "safety",
+        "name": "安全衛生",
+        "icon": "bi-shield-check",
+        "tools": [
+            {
+                "id": "qualifications",
+                "name": "資格者証管理",
+                "description": "作業員の資格者証を一元管理し、有効期限の近接 (180/60/30 日) を可視化します。",
+                "icon": "bi-patch-check",
+                "url": "/qualifications/",
+                "color": "primary",
+            },
+        ],
+    },
 ]
 
 
