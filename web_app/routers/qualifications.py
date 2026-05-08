@@ -1,16 +1,17 @@
-"""資格者証管理ルーター — Phase 1 骨組み
+"""資格者証管理ルーター
 
 このルーターは段階的に育てる:
 
-Phase 1 (本コミット):
-  - GET /qualifications/         → 確定済み一覧 + 期限サマリ
-  - GET /qualifications/pending  → 未確定 (draft) 一覧
+Phase 1:
+  - GET  /qualifications/                  → 確定済み一覧 + 期限サマリ
+  - GET  /qualifications/pending           → 未確定 (draft) 一覧
+  - GET  /qualifications/upload            → アップロード画面 (admin)
+  - POST /qualifications/upload            → ファイル保存 + ジョブ作成 (admin)
 
 Phase 2:
-  - GET/POST /qualifications/upload                   (require_admin)
-  - GET/POST /qualifications/jobs/<job_id>/classify   (require_admin)
-  - GET/POST /qualifications/<cert_id>/review         (require_admin)
-  - POST     /qualifications/<cert_id>/delete         (require_admin)
+  - GET/POST /qualifications/jobs/<job_id>/classify   (admin)
+  - GET/POST /qualifications/<cert_id>/review         (admin)
+  - POST     /qualifications/<cert_id>/delete         (admin)
 
 権限モデル:
   - 全員閲覧 (general 相当): ``get_current_user`` でログイン必須
@@ -27,14 +28,25 @@ Phase 2:
 from __future__ import annotations
 
 import logging
+import shutil
+import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from web_app.core.config import (
+    QUALIFICATIONS_MAX_FILES_PER_UPLOAD,
+    QUALIFICATIONS_MAX_FILE_MB,
+)
 from web_app.core.database import get_db
-from web_app.core.dependencies import get_current_user
+from web_app.core.dependencies import get_current_user, require_admin
 from web_app.core.templates import templates as _templates
+from skills.qualifications.storage import (
+    is_allowed_extension,
+    sanitize_filename,
+    staging_dir_for,
+)
 
 logger = logging.getLogger("web_app.qualifications")
 
@@ -182,4 +194,144 @@ async def pending(request: Request, user: dict = Depends(get_current_user)):
             "drafts": rows,
             "pending_count": pending_count,
         },
+    )
+
+
+# ────────────────────────────────────────────
+# アップロード (admin)
+# ────────────────────────────────────────────
+
+@router.get("/upload", response_class=HTMLResponse)
+async def upload_page(request: Request, user: dict = Depends(require_admin)):
+    """アップロード画面を返す。admin のみ。"""
+    return _templates.TemplateResponse(
+        request,
+        "qualifications/upload.html",
+        {
+            "user": user,
+            "skill_key": _SKILL_KEY,
+            "active_tab": "upload",
+            "max_file_mb": QUALIFICATIONS_MAX_FILE_MB,
+            "max_files": QUALIFICATIONS_MAX_FILES_PER_UPLOAD,
+        },
+    )
+
+
+@router.post("/upload")
+async def upload_files(
+    files: list[UploadFile] = File(...),
+    user: dict = Depends(require_admin),
+):
+    """multipart で複数ファイルを受け取り、ステージングへ保存して
+    ``q_upload_jobs`` に status='pending' のジョブを作成する。
+
+    後続の OCR/classify ステップは Phase 2 で worker に乗せる。本エンドポイントは
+    あくまで「ステージング完了」を返すだけ。失敗時は途中で書き出したファイルを
+    削除して整合性を保つ。
+    """
+    # ── 入力検証 ──
+    if not files:
+        return JSONResponse({"ok": False, "error": "ファイルが選択されていません。"}, status_code=400)
+    if len(files) > QUALIFICATIONS_MAX_FILES_PER_UPLOAD:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    f"一度にアップロードできるのは "
+                    f"{QUALIFICATIONS_MAX_FILES_PER_UPLOAD} 枚までです。"
+                ),
+            },
+            status_code=400,
+        )
+
+    max_bytes = QUALIFICATIONS_MAX_FILE_MB * 1024 * 1024
+
+    # ── ファイル拡張子・サイズの先行検証（DB 書き込み前にエラーを返す） ──
+    contents: list[tuple[str, bytes]] = []
+    for f in files:
+        original_name = f.filename or "unnamed"
+        if not is_allowed_extension(original_name):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": f"非対応のファイル形式です: {original_name}（PDF/JPG/PNG のみ）",
+                },
+                status_code=400,
+            )
+        data = await f.read()
+        if len(data) == 0:
+            return JSONResponse(
+                {"ok": False, "error": f"空ファイルです: {original_name}"},
+                status_code=400,
+            )
+        if len(data) > max_bytes:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        f"{original_name} がサイズ上限 "
+                        f"{QUALIFICATIONS_MAX_FILE_MB} MB を超えています。"
+                    ),
+                },
+                status_code=400,
+            )
+        contents.append((original_name, data))
+
+    # ── ジョブ ID とステージング ──
+    job_id = uuid.uuid4().hex
+    staging = staging_dir_for(job_id)
+
+    saved_paths: list[str] = []
+    try:
+        # ファイル名衝突を避けるため、必要に応じてサフィックスを付ける
+        used_names: set[str] = set()
+        for original_name, data in contents:
+            base = sanitize_filename(original_name)
+            unique = base
+            n = 1
+            while unique in used_names:
+                stem, _, ext = base.rpartition(".")
+                unique = f"{stem}_{n}.{ext}" if ext else f"{base}_{n}"
+                n += 1
+            used_names.add(unique)
+            target = staging / unique
+            target.write_bytes(data)
+            saved_paths.append(str(target))
+
+        # ── DB レコード作成 ──
+        db = await get_db()
+        try:
+            await db.execute(
+                """
+                INSERT INTO q_upload_jobs (job_id, user_id, file_count, status)
+                VALUES (?, ?, ?, 'pending')
+                """,
+                (job_id, user["id"], len(contents)),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+    except Exception as e:
+        # 部分的に書き出したファイルを片付けて再送出
+        logger.exception("アップロード処理でエラー発生 job_id=%s", job_id)
+        shutil.rmtree(staging, ignore_errors=True)
+        return JSONResponse(
+            {"ok": False, "error": f"サーバーエラー: {e.__class__.__name__}"},
+            status_code=500,
+        )
+
+    logger.info(
+        "qualifications upload accepted: job_id=%s files=%d user=%s",
+        job_id, len(contents), user.get("username"),
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "job_id": job_id,
+            "file_count": len(contents),
+            "status": "pending",
+            "saved_files": [p.rsplit("/", 1)[-1] for p in saved_paths],
+            # Phase 2 で classify 画面に飛ばす想定。今は upload 画面に留まる。
+            "next_url": None,
+        }
     )

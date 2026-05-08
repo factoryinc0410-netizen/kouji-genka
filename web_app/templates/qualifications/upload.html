@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}アップロード — 資格者証管理{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item active">アップロード</li>
+        </ol>
+    </nav>
+    <h3><i class="bi bi-cloud-arrow-up me-2 text-primary"></i>資格者証アップロード</h3>
+    <p class="text-muted mb-0">
+        PDF / JPEG / PNG をドラッグ&amp;ドロップで投入します。最大
+        <strong>{{ max_files }}</strong> 枚 / 1 枚あたり
+        <strong>{{ max_file_mb }} MB</strong> まで。
+        OCR (gemini-2.5-flash) は Phase 2 で接続予定。
+    </p>
+</div>
+
+{% include "qualifications/_nav.html" %}
+
+<div class="mt-4"></div>
+
+<div id="alert-area"></div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-files me-1"></i>ファイルアップロード
+    </div>
+    <div class="card-body">
+        <form id="upload-form">
+            <div id="drop-zone"
+                 class="upload-zone text-center p-5 border border-2 border-dashed rounded"
+                 style="cursor: pointer; transition: background .15s ease;">
+                <i class="bi bi-cloud-arrow-up display-4 text-primary"></i>
+                <p class="mt-3 mb-1 fw-bold">PDF / JPG / PNG をドラッグ&amp;ドロップ</p>
+                <p class="text-muted mb-3">または</p>
+                <button type="button" id="file-select-btn" class="btn btn-outline-primary">
+                    <i class="bi bi-folder2-open me-1"></i>ファイルを選択
+                </button>
+                <input type="file" id="file-input" multiple
+                       accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                       class="d-none">
+                <p class="mt-2 text-muted small mb-0">
+                    対応: .pdf .jpg .jpeg .png（最大 {{ max_files }} 枚 / 1 枚 {{ max_file_mb }} MB）
+                </p>
+            </div>
+
+            <div id="selected-files" class="row g-3 mt-1"></div>
+
+            <div class="d-flex justify-content-end mt-3">
+                <button type="button" id="clear-btn" class="btn btn-outline-secondary me-2 d-none">
+                    <i class="bi bi-x-lg me-1"></i>クリア
+                </button>
+                <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
+                    <i class="bi bi-upload me-1"></i>アップロード
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="progress-section" class="card shadow-sm mb-4 d-none">
+    <div class="card-header">
+        <i class="bi bi-hourglass-split me-1"></i>処理状況
+    </div>
+    <div class="card-body">
+        <div class="progress mb-3" style="height: 24px;">
+            <div id="progress-bar"
+                 class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width: 0%">0%</div>
+        </div>
+        <p id="progress-status" class="mb-0 fw-bold">アップロード中...</p>
+    </div>
+</div>
+
+<div id="result-section" class="card shadow-sm d-none">
+    <div class="card-header bg-success text-white">
+        <i class="bi bi-check-circle me-1"></i>アップロード完了
+    </div>
+    <div class="card-body" id="result-body"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    'use strict';
+
+    const MAX_FILES   = {{ max_files }};
+    const MAX_FILE_MB = {{ max_file_mb }};
+    const ACCEPT_EXT  = ['pdf', 'jpg', 'jpeg', 'png'];
+
+    const dropZone     = document.getElementById('drop-zone');
+    const fileInput    = document.getElementById('file-input');
+    const selectBtn    = document.getElementById('file-select-btn');
+    const filesPanel   = document.getElementById('selected-files');
+    const clearBtn     = document.getElementById('clear-btn');
+    const uploadBtn    = document.getElementById('upload-btn');
+    const form         = document.getElementById('upload-form');
+    const alertArea    = document.getElementById('alert-area');
+    const progressBar  = document.getElementById('progress-bar');
+    const progressSec  = document.getElementById('progress-section');
+    const progressMsg  = document.getElementById('progress-status');
+    const resultSec    = document.getElementById('result-section');
+    const resultBody   = document.getElementById('result-body');
+
+    /** 選択中のファイル一覧（File オブジェクトを保持） */
+    let staged = [];
+
+    function showAlert(kind, msg) {
+        alertArea.innerHTML =
+            '<div class="alert alert-' + kind + ' alert-dismissible fade show" role="alert">' +
+            msg +
+            '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="閉じる"></button>' +
+            '</div>';
+    }
+
+    function clearAlert() { alertArea.innerHTML = ''; }
+
+    function fmtSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    function extOf(name) {
+        const i = name.lastIndexOf('.');
+        return i < 0 ? '' : name.slice(i + 1).toLowerCase();
+    }
+
+    function isImage(name) {
+        const e = extOf(name);
+        return e === 'jpg' || e === 'jpeg' || e === 'png';
+    }
+
+    function validate(file) {
+        if (!ACCEPT_EXT.includes(extOf(file.name))) {
+            return '非対応の形式: ' + file.name;
+        }
+        if (file.size === 0) return '空ファイル: ' + file.name;
+        if (file.size > MAX_FILE_MB * 1024 * 1024) {
+            return file.name + ' がサイズ上限 ' + MAX_FILE_MB + ' MB を超えています。';
+        }
+        return null;
+    }
+
+    function addFiles(filelist) {
+        clearAlert();
+        const errors = [];
+        for (const f of filelist) {
+            if (staged.length >= MAX_FILES) {
+                errors.push('一度にアップロードできるのは ' + MAX_FILES + ' 枚までです。');
+                break;
+            }
+            const err = validate(f);
+            if (err) { errors.push(err); continue; }
+            // 同名ファイルの重複は許容（サーバー側でサフィックスを付与）
+            staged.push(f);
+        }
+        if (errors.length) showAlert('warning', errors.join('<br>'));
+        renderFiles();
+    }
+
+    function removeAt(i) {
+        staged.splice(i, 1);
+        renderFiles();
+    }
+
+    function renderFiles() {
+        filesPanel.innerHTML = '';
+        if (staged.length === 0) {
+            uploadBtn.disabled = true;
+            clearBtn.classList.add('d-none');
+            return;
+        }
+        uploadBtn.disabled = false;
+        clearBtn.classList.remove('d-none');
+
+        staged.forEach(function (f, i) {
+            const col = document.createElement('div');
+            col.className = 'col-6 col-md-4 col-lg-3';
+
+            // サムネイル: 画像なら ObjectURL、PDF なら bi-file-pdf アイコン
+            let thumb;
+            if (isImage(f.name)) {
+                const url = URL.createObjectURL(f);
+                thumb = '<img src="' + url + '" alt="" ' +
+                        'class="img-fluid rounded mb-2" ' +
+                        'style="max-height: 160px; object-fit: contain;">';
+            } else {
+                thumb = '<div class="text-danger mb-2" style="font-size: 4rem; line-height: 1;">' +
+                        '<i class="bi bi-file-earmark-pdf"></i></div>';
+            }
+
+            col.innerHTML =
+                '<div class="card h-100 shadow-sm">' +
+                  '<div class="card-body text-center p-2">' +
+                    thumb +
+                    '<div class="small fw-bold text-truncate" title="' + f.name + '">' + f.name + '</div>' +
+                    '<div class="small text-muted">' + fmtSize(f.size) + '</div>' +
+                    '<button type="button" class="btn btn-sm btn-outline-danger mt-2" data-idx="' + i + '">' +
+                      '<i class="bi bi-x-lg"></i> 削除' +
+                    '</button>' +
+                  '</div>' +
+                '</div>';
+            filesPanel.appendChild(col);
+        });
+
+        // 削除ボタンにハンドラを付与（イベント委譲ではなく単純に都度バインド）
+        filesPanel.querySelectorAll('[data-idx]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                removeAt(parseInt(btn.getAttribute('data-idx'), 10));
+            });
+        });
+    }
+
+    // ── ドラッグ&ドロップ ──
+    ['dragenter', 'dragover'].forEach(function (ev) {
+        dropZone.addEventListener(ev, function (e) {
+            e.preventDefault(); e.stopPropagation();
+            dropZone.style.background = '#e7f1ff';
+        });
+    });
+    ['dragleave', 'drop'].forEach(function (ev) {
+        dropZone.addEventListener(ev, function (e) {
+            e.preventDefault(); e.stopPropagation();
+            dropZone.style.background = '';
+        });
+    });
+    dropZone.addEventListener('drop', function (e) {
+        if (e.dataTransfer && e.dataTransfer.files) {
+            addFiles(e.dataTransfer.files);
+        }
+    });
+    dropZone.addEventListener('click', function () { fileInput.click(); });
+
+    selectBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', function () {
+        if (fileInput.files) addFiles(fileInput.files);
+        fileInput.value = '';   // 同じファイル再選択を許可
+    });
+
+    clearBtn.addEventListener('click', function () {
+        staged = []; renderFiles(); clearAlert();
+    });
+
+    // ── 送信 ──
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (staged.length === 0) return;
+
+        clearAlert();
+        resultSec.classList.add('d-none');
+        progressSec.classList.remove('d-none');
+        uploadBtn.disabled = true;
+
+        const fd = new FormData();
+        staged.forEach(function (f) { fd.append('files', f, f.name); });
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/qualifications/upload', true);
+
+        xhr.upload.addEventListener('progress', function (ev) {
+            if (!ev.lengthComputable) return;
+            const pct = Math.round((ev.loaded / ev.total) * 100);
+            progressBar.style.width = pct + '%';
+            progressBar.textContent = pct + '%';
+        });
+
+        xhr.addEventListener('load', function () {
+            uploadBtn.disabled = false;
+            let payload = null;
+            try { payload = JSON.parse(xhr.responseText); } catch (_) {}
+
+            if (xhr.status >= 200 && xhr.status < 300 && payload && payload.ok) {
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                progressMsg.textContent = '完了';
+                progressBar.classList.remove('progress-bar-animated');
+
+                resultBody.innerHTML =
+                    '<dl class="row mb-0">' +
+                    '<dt class="col-sm-3">ジョブ ID</dt>' +
+                    '<dd class="col-sm-9 text-monospace"><code>' + payload.job_id + '</code></dd>' +
+                    '<dt class="col-sm-3">ファイル数</dt>' +
+                    '<dd class="col-sm-9">' + payload.file_count + ' 件</dd>' +
+                    '<dt class="col-sm-3">ステータス</dt>' +
+                    '<dd class="col-sm-9"><span class="badge bg-secondary">' +
+                      payload.status + '</span> (Phase 2 で OCR / 分類処理に進みます)</dd>' +
+                    '<dt class="col-sm-3">保存ファイル</dt>' +
+                    '<dd class="col-sm-9 small text-muted">' +
+                      payload.saved_files.map(function (n) {
+                          return '<div><i class="bi bi-file-earmark me-1"></i>' + n + '</div>';
+                      }).join('') +
+                    '</dd>' +
+                    '</dl>';
+                resultSec.classList.remove('d-none');
+                staged = []; renderFiles();
+            } else {
+                progressSec.classList.add('d-none');
+                const msg = (payload && payload.error) ? payload.error :
+                            ('サーバーエラー (HTTP ' + xhr.status + ')');
+                showAlert('danger',
+                    '<i class="bi bi-exclamation-triangle me-1"></i>' + msg);
+            }
+        });
+
+        xhr.addEventListener('error', function () {
+            uploadBtn.disabled = false;
+            progressSec.classList.add('d-none');
+            showAlert('danger',
+                '<i class="bi bi-wifi-off me-1"></i>通信エラー: サーバーに到達できませんでした。');
+        });
+
+        // 進捗初期化
+        progressBar.classList.add('progress-bar-animated');
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+        progressMsg.textContent = 'アップロード中...';
+        xhr.send(fd);
+    });
+})();
+</script>
+{% endblock %}

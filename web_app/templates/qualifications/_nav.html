@@ -20,14 +20,13 @@
     </li>
     {% if user.is_admin %}
     <li class="nav-item">
-        {# Phase 2 で実装予定。Phase 1 では未活性 #}
-        <a class="nav-link disabled" aria-disabled="true"
-           title="Phase 2 で実装予定">
+        <a class="nav-link {% if active_tab == 'upload' %}active{% endif %}"
+           href="/qualifications/upload">
             <i class="bi bi-cloud-arrow-up me-1"></i>アップロード
-            <span class="badge bg-secondary ms-1">準備中</span>
         </a>
     </li>
     <li class="nav-item">
+        {# 資格マスタ管理は Phase 2 で実装予定 #}
         <a class="nav-link disabled" aria-disabled="true"
            title="Phase 2 で実装予定">
             <i class="bi bi-collection me-1"></i>資格マスタ
