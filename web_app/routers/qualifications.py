@@ -898,6 +898,90 @@ def _json_dumps(value) -> str:
 
 
 # ────────────────────────────────────────────
+# 作業員別ビュー (Phase 3.3) — 1 人分の保有資格をまとめる個票
+# ────────────────────────────────────────────
+
+async def _fetch_worker(db, worker_id: int) -> dict | None:
+    """cc_workers から 1 件取得する (個票ヘッダ用)。"""
+    cur = await db.execute(
+        """
+        SELECT worker_id, worker_name, group_name, is_active
+          FROM cc_workers
+         WHERE worker_id = ?
+        """,
+        (worker_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def _fetch_worker_certificates(db, worker_id: int) -> list[dict]:
+    """指定作業員の status='confirmed' 資格者証一覧を取得する。
+
+    並びは「カテゴリ → display_order → 資格名」で、同じカテゴリの資格を
+    まとめて閲覧しやすくする。各行に bucket と original_files を付与する。
+    """
+    cur = await db.execute(
+        """
+        SELECT  c.cert_id, c.certificate_no, c.issuer,
+                c.issued_on, c.expires_on, c.renewal_required,
+                c.notes, c.status, c.original_files_json,
+                c.ocr_confidence, c.created_at, c.updated_at,
+                ql.qual_id, ql.name AS qual_name,
+                ql.category AS qual_category, ql.display_order
+          FROM  q_certificates c
+          JOIN  q_qualifications ql ON ql.qual_id = c.qual_id
+         WHERE  c.worker_id = ? AND c.status = 'confirmed'
+         ORDER BY ql.category, ql.display_order, ql.name,
+                  c.expires_on IS NULL, c.expires_on
+        """,
+        (worker_id,),
+    )
+    rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        r["bucket"] = _expiry_bucket(r["expires_on"], r["renewal_required"])
+        r["original_files"] = _parse_original_files(r["original_files_json"])
+    return rows
+
+
+@router.get("/workers/{worker_id}", response_class=HTMLResponse)
+async def worker_view(
+    request: Request,
+    worker_id: int,
+    user: dict = Depends(get_current_user),
+):
+    """作業員 1 人分の保有資格をまとめた個票画面。
+
+    - 上部: 作業員情報カード + サマリ stat-cards
+    - 下部: 該当作業員の資格者証一覧 (status='confirmed' のみ)
+    - 存在しない worker_id は 404
+    """
+    db = await get_db()
+    try:
+        worker = await _fetch_worker(db, worker_id)
+        if worker is None:
+            raise HTTPException(status_code=404, detail="作業員が見つかりません")
+        certificates = await _fetch_worker_certificates(db, worker_id)
+        pending_count = await _count_active_jobs(db)
+    finally:
+        await db.close()
+
+    return _templates.TemplateResponse(
+        request,
+        "qualifications/worker_view.html",
+        {
+            "user": user,
+            "skill_key": _SKILL_KEY,
+            "active_tab": "index",
+            "worker": worker,
+            "certificates": certificates,
+            "summary": _summarize(certificates),
+            "pending_count": pending_count,
+        },
+    )
+
+
+# ────────────────────────────────────────────
 # 編集 / 削除 (Phase 3.1)
 # ────────────────────────────────────────────
 

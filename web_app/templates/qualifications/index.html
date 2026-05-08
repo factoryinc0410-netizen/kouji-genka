@@ -183,7 +183,11 @@
                     {% for c in certificates %}
                     <tr class="{% if c.status == 'archived' %}table-secondary text-muted{% endif %}">
                         <td class="fw-bold">
-                            {{ c.worker_name }}
+                            <a href="/qualifications/workers/{{ c.worker_id }}"
+                               class="text-decoration-none"
+                               title="{{ c.worker_name }} の保有資格を表示">
+                                {{ c.worker_name }}
+                            </a>
                             {% if c.status == 'archived' %}
                             <span class="badge bg-secondary ms-1" title="アーカイブ済み (削除済み)">
                                 <i class="bi bi-archive me-1"></i>アーカイブ
