@@ -81,6 +81,18 @@ LIBREOFFICE_TIMEOUT: int = int(os.getenv("LIBREOFFICE_TIMEOUT", "120"))
 # ── アップロード制限 ──────────────────────────────────────────
 MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
 
+# ── 資格者証管理 (qualifications) ────────────────────────────
+# Gemini API キー（未設定なら OCR は自動で無効化される）
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+# OCR 機能の ON/OFF。GEMINI_API_KEY 未設定時は実質無効。
+QUALIFICATIONS_OCR_ENABLED: bool = _env_bool("QUALIFICATIONS_OCR_ENABLED", True)
+# 1 ファイルあたり最大サイズ (MB)
+QUALIFICATIONS_MAX_FILE_MB: int = int(os.getenv("QUALIFICATIONS_MAX_FILE_MB", "20"))
+# 1 アップロードジョブで投入可能な最大ファイル数
+QUALIFICATIONS_MAX_FILES_PER_UPLOAD: int = int(
+    os.getenv("QUALIFICATIONS_MAX_FILES_PER_UPLOAD", "5")
+)
+
 # ── クリーンアップ ────────────────────────────────────────────
 CLEANUP_AGE_HOURS: int = int(os.getenv("CLEANUP_AGE_HOURS", "72"))
 # クリーンアップ実行間隔（秒）— デフォルト 1 時間
@@ -91,6 +103,20 @@ MAX_JOBS_PER_USER: int = int(os.getenv("MAX_JOBS_PER_USER", "4"))
 # ── ワーカー ──────────────────────────────────────────────────
 # ジョブ処理タイムアウト（秒）— デフォルト 10 分
 JOB_TIMEOUT_SECONDS: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "600"))
+
+# ── 期限アラートメール通知 (qualifications) ───────────────────
+# scripts/send_expiration_alerts.py を cron から実行する際に参照される。
+# SMTP_SERVER が空のままなら通知は無効化扱い（収集だけ走らせて終了）。
+SMTP_SERVER: str = os.getenv("SMTP_SERVER", "")
+SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER: str = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+# True の場合 SMTP 接続後 starttls() を呼ぶ。587 ポートでの一般的な構成。
+SMTP_USE_TLS: bool = _env_bool("SMTP_USE_TLS", True)
+# 送信元アドレス（ヘッダ "From")。
+ALERT_EMAIL_FROM: str = os.getenv("ALERT_EMAIL_FROM", "")
+# 宛先（ヘッダ "To"）。複数指定はカンマ区切り。
+ALERT_EMAIL_TO: str = os.getenv("ALERT_EMAIL_TO", "")
 
 # ── ディレクトリ自動作成 ──────────────────────────────────────
 for _dir in (DATABASE_PATH.parent, UPLOAD_DIR, OUTPUT_DIR):

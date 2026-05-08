@@ -306,7 +306,7 @@ CREATE INDEX IF NOT EXISTS idx_cc_cumhist_month ON cc_cumulative_history(target_
 CREATE INDEX IF NOT EXISTS idx_cc_proclog_month ON cc_process_log(target_month);
 
 -- ========================================
--- 機能ごとの階層的アクセス制御
+-- RBAC: 機能ごとの階層的アクセス制御
 -- access_level: 'none' / 'general' / 'manager'
 -- 強さの順序: manager > general > none
 -- 1ユーザー × 1機能 で 1行（UNIQUE）。レコードが無い場合は 'none' 相当と解釈する。
@@ -356,4 +356,78 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 );
 CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id);
 CREATE INDEX IF NOT EXISTS idx_role_permissions_feature ON role_permissions(feature_name);
+
+-- ========================================
+-- 資格者証管理: 資格マスタ
+-- 例: 玉掛け技能講習 / フォークリフト運転技能講習 / 酸欠特別教育 等
+-- renewal_required=0 のものは有効期限を持たない（更新不要）。
+-- default_valid_years は新規登録時の有効期限自動補完に使う（NULL=不定）。
+-- ========================================
+CREATE TABLE IF NOT EXISTS q_qualifications (
+    qual_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                 TEXT    NOT NULL UNIQUE,
+    category             TEXT    NOT NULL DEFAULT '',
+    renewal_required     INTEGER NOT NULL DEFAULT 1,
+    default_valid_years  INTEGER,
+    is_active            INTEGER NOT NULL DEFAULT 1,
+    display_order        INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at           TEXT
+);
+
+-- ========================================
+-- 資格者証管理: 資格者証（実体）
+-- 作業員は cc_workers を参照。FK は ON DELETE RESTRICT で誤削除を防ぐ。
+-- status:
+--   'draft'     — OCR 直後の未確定。期限統計には含めない。
+--   'confirmed' — 管理者が内容を確定済み。期限ダッシュボードの集計対象。
+--   'archived'  — 論理削除（過去の履歴として保持）。
+-- original_files_json: ["uploads/qualifications/<worker_id>/<uuid>.pdf", ...]
+-- ocr_raw_json: Gemini レスポンス原本（PII を含むため app log には出さない）。
+-- ========================================
+CREATE TABLE IF NOT EXISTS q_certificates (
+    cert_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    worker_id            INTEGER NOT NULL REFERENCES cc_workers(worker_id) ON DELETE RESTRICT,
+    qual_id              INTEGER NOT NULL REFERENCES q_qualifications(qual_id) ON DELETE RESTRICT,
+    certificate_no       TEXT,
+    issuer               TEXT,
+    issued_on            TEXT,
+    expires_on           TEXT,
+    renewal_required     INTEGER NOT NULL DEFAULT 1,
+    notes                TEXT,
+    status               TEXT    NOT NULL DEFAULT 'confirmed'
+                                 CHECK (status IN ('draft','confirmed','archived')),
+    original_files_json  TEXT    NOT NULL DEFAULT '[]',
+    ocr_raw_json         TEXT,
+    ocr_confidence       REAL,
+    ocr_model            TEXT,
+    created_by           TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at           TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_q_certs_worker  ON q_certificates(worker_id);
+CREATE INDEX IF NOT EXISTS idx_q_certs_qual    ON q_certificates(qual_id);
+CREATE INDEX IF NOT EXISTS idx_q_certs_expires ON q_certificates(expires_on);
+CREATE INDEX IF NOT EXISTS idx_q_certs_status  ON q_certificates(status);
+
+-- ========================================
+-- 資格者証管理: アップロードジョブ
+-- 1 回のアップロード（最大 5 ファイル）を 1 ジョブとして追跡。
+-- Gemini が返した「ページ → 資格候補」の中間結果を classify_json に保持し、
+-- classify.html でグルーピング確定するまで保留する。
+-- ========================================
+CREATE TABLE IF NOT EXISTS q_upload_jobs (
+    job_id          TEXT    PRIMARY KEY,
+    user_id         TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    worker_id       INTEGER REFERENCES cc_workers(worker_id) ON DELETE SET NULL,
+    file_count      INTEGER NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK (status IN ('pending','uploading','ocr','classifying','await_review','done','error')),
+    classify_json   TEXT,
+    error_message   TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_q_upload_jobs_user   ON q_upload_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_q_upload_jobs_status ON q_upload_jobs(status);
 """

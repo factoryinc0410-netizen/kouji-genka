@@ -49,6 +49,25 @@
                         </ul>
                     </li>
                     {% endif %}
+                    {# ── 資格者証管理 (qualifications) ──
+                       今は全ログインユーザーに表示。RBAC 連携 (has_perm 化) は
+                       後続の「qualifications を RBAC 化」フェーズで対応する。 #}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-patch-check me-1"></i>資格者証管理
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/qualifications/"><i class="bi bi-list-check me-2"></i>一覧</a></li>
+                            <li><a class="dropdown-item" href="/qualifications/pending"><i class="bi bi-hourglass-split me-2"></i>未確定</a></li>
+                            {% if user.is_admin %}
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/qualifications/upload"><i class="bi bi-cloud-arrow-up me-2"></i>アップロード</a></li>
+                            <li><a class="dropdown-item" href="/qualifications/manual-add"><i class="bi bi-plus-square me-2"></i>手動追加</a></li>
+                            <li><a class="dropdown-item" href="/master/qualifications"><i class="bi bi-collection me-2"></i>資格マスタ</a></li>
+                            {% endif %}
+                        </ul>
+                    </li>
+                    {# ── 管理 (is_admin 限定) ── ユーザー管理画面 (RBAC) #}
                     {% if user.is_admin %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">

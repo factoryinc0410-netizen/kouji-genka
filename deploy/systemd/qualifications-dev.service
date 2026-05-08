@@ -1,0 +1,84 @@
+# ================================================================
+#  qualifications-dev — dev-app systemd unit (port 8080 直公開構成)
+#  配置先: /etc/systemd/system/qualifications-dev.service
+#
+#  位置づけ:
+#    - dev-app を 0.0.0.0:8080 で直接公開する構成 (Nginx を前段に置かない)。
+#      8080 は ufw で開放済みのため、外部 IF からそのままブラウザアクセス可。
+#    - Nginx 経由・8001 構成は deploy/systemd/factoryskills.service を参照。
+#    - 本番運用 (prod-app) は別サービス (factory-prod.service) として
+#      /home/ubuntu/prod-app/ で稼働中 — こちらは絶対に触らないこと。
+#
+#  インストール:
+#    sudo cp deploy/systemd/qualifications-dev.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable --now qualifications-dev
+#
+#  状態確認:
+#    sudo systemctl status qualifications-dev
+#    sudo journalctl -u qualifications-dev -f
+#    curl -I http://localhost:8080/
+#
+#  注意:
+#    --workers は必ず 1 を維持すること。
+#    ジョブキュー (web_app/services/worker.py) はプロセス内 queue.Queue で
+#    実装されており、複数プロセスにすると DB 排他とジョブ重複の問題が発生する。
+# ================================================================
+
+[Unit]
+Description=Factoryskills dev-app (qualifications) — direct on 0.0.0.0:8080
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ── 実行ユーザー / 作業ディレクトリ ──
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dev-app
+
+# ── 環境変数 ──
+# .env を EnvironmentFile で読み込む (アプリ側 dotenv ロードと二重になるが冪等)。
+EnvironmentFile=/home/ubuntu/dev-app/.env
+Environment="PYTHONIOENCODING=utf-8"
+Environment="PYTHONUNBUFFERED=1"
+
+# ── 起動コマンド ──
+# ufw で 8080/tcp を許可済みのため、Nginx を介さず 0.0.0.0:8080 に直接バインド。
+# --workers 1 はジョブキュー設計上の必須要件。
+ExecStart=/home/ubuntu/dev-app/.venv/bin/python -m uvicorn web_app.main:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --workers 1 \
+    --log-level info \
+    --no-access-log
+
+# ── 停止 ──
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# ── 自動再起動 ──
+Restart=on-failure
+RestartSec=5s
+
+# ── ログ (stdout/stderr は journald 経由) ──
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qualifications-dev
+
+# ── セキュリティ強化 (任意・推奨) ──
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# /home は ProtectSystem=full でも書込可だが、明示する場合:
+# ReadWritePaths=/home/ubuntu/dev-app/web_app/data /home/ubuntu/dev-app/web_app/uploads /home/ubuntu/dev-app/web_app/outputs
+
+[Install]
+WantedBy=multi-user.target

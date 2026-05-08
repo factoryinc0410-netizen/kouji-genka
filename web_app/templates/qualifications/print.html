@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+{# 印刷専用テンプレート — base.html を継承せず、ナビ/ヘッダ/フッタをすべて省く。
+   Playwright (chromium) で PDF 化される想定で @page CSS でレイアウトを制御する。
+   外部 CSS は読まないようインライン化 (オフラインでも安定動作)。 #}
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>資格者証 一覧</title>
+    <style>
+    /* ── 印刷用ページ設定 ───────────────────── */
+    @page {
+        size: A4 landscape;
+        margin: 10mm;
+    }
+
+    /* ── リセット・ベース ───────────────────── */
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0;
+        padding: 0;
+        font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", "Meiryo",
+                     sans-serif;
+        font-size: 10pt;
+        color: #212529;
+        line-height: 1.4;
+    }
+    body { padding: 0; }
+
+    /* ── ヘッダ ───────────────────── */
+    .doc-header {
+        border-bottom: 2px solid #212529;
+        padding-bottom: 6mm;
+        margin-bottom: 6mm;
+    }
+    .doc-title {
+        font-size: 16pt;
+        font-weight: bold;
+        margin: 0 0 3mm 0;
+    }
+    .doc-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        font-size: 9pt;
+        color: #495057;
+    }
+    .doc-meta .filter-label {
+        flex: 1;
+    }
+    .doc-meta .generated-at {
+        white-space: nowrap;
+        margin-left: 8mm;
+    }
+
+    /* ── サマリ stat-blocks ───────────────────── */
+    .summary {
+        display: flex;
+        gap: 4mm;
+        margin-bottom: 5mm;
+    }
+    .summary .stat {
+        flex: 1;
+        border: 1px solid #dee2e6;
+        border-radius: 2mm;
+        padding: 2.5mm 3mm;
+        font-size: 8.5pt;
+    }
+    .summary .stat .label {
+        color: #6c757d;
+        margin-bottom: 1mm;
+        font-size: 8pt;
+    }
+    .summary .stat .value {
+        font-size: 14pt;
+        font-weight: bold;
+    }
+    .summary .stat.safe       { border-color: #198754; }
+    .summary .stat.safe .value, .summary .stat.safe .label       { color: #198754; }
+    .summary .stat.warning    { border-color: #ffc107; }
+    .summary .stat.warning .value, .summary .stat.warning .label { color: #b88600; }
+    .summary .stat.expired    { border-color: #dc3545; }
+    .summary .stat.expired .value, .summary .stat.expired .label { color: #dc3545; }
+    .summary .stat.no_renewal { border-color: #6c757d; }
+    .summary .stat.no_renewal .value, .summary .stat.no_renewal .label { color: #6c757d; }
+
+    /* ── テーブル ───────────────────── */
+    table.cert-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 9pt;
+    }
+    table.cert-table thead th {
+        background: #212529;
+        color: #fff;
+        text-align: left;
+        padding: 2mm 2.5mm;
+        font-weight: bold;
+        font-size: 8.5pt;
+        border-bottom: 1px solid #000;
+    }
+    table.cert-table tbody td {
+        padding: 1.8mm 2.5mm;
+        border-bottom: 1px solid #e9ecef;
+        vertical-align: middle;
+    }
+    table.cert-table tbody tr:nth-child(even) td {
+        background: #f8f9fa;
+    }
+    table.cert-table tbody tr.archived td {
+        color: #6c757d;
+        background: #e9ecef;
+        font-style: italic;
+    }
+    .text-center { text-align: center; }
+    .small { font-size: 8.5pt; }
+    .col-worker { width: 16%; font-weight: bold; }
+    .col-group  { width: 10%; color: #6c757d; }
+    .col-qual   { width: 26%; }
+    .col-no     { width: 13%; }
+    .col-issued { width: 10%; }
+    .col-expiry { width: 10%; }
+    .col-status { width: 15%; text-align: center; }
+    .col-archived-badge {
+        font-size: 7.5pt;
+        background: #6c757d;
+        color: #fff;
+        padding: 0.5mm 1.5mm;
+        border-radius: 1.5mm;
+        margin-left: 2mm;
+    }
+
+    /* ── ステータスバッジ ───────────────────── */
+    .badge {
+        display: inline-block;
+        padding: 0.5mm 2mm;
+        border-radius: 1.5mm;
+        font-size: 8pt;
+        font-weight: bold;
+        white-space: nowrap;
+    }
+    .badge.safe    { background: #d1e7dd; color: #0a3622; border: 1px solid #198754; }
+    .badge.far     { background: #cff4fc; color: #055160; border: 1px solid #0dcaf0; }
+    .badge.soon    { background: #fff3cd; color: #664d03; border: 1px solid #ffc107; }
+    .badge.urgent  { background: #ffe5d0; color: #843a00; border: 1px solid #fd7e14; }
+    .badge.expired { background: #f8d7da; color: #58151c; border: 1px solid #dc3545; }
+    .badge.no_renewal { background: #e9ecef; color: #495057; border: 1px solid #6c757d; }
+
+    /* ── 空状態 ───────────────────── */
+    .empty-state {
+        padding: 30mm 0;
+        text-align: center;
+        color: #6c757d;
+        font-size: 11pt;
+        border: 1px dashed #adb5bd;
+        border-radius: 3mm;
+    }
+
+    /* ── フッタ ───────────────────── */
+    .doc-footer {
+        margin-top: 8mm;
+        padding-top: 3mm;
+        border-top: 1px solid #dee2e6;
+        font-size: 8pt;
+        color: #6c757d;
+        text-align: right;
+    }
+
+    /* 改ページ調整: 行を分割しない */
+    table.cert-table tr {
+        page-break-inside: avoid;
+    }
+    </style>
+</head>
+<body>
+
+<header class="doc-header">
+    <h1 class="doc-title">資格者証 一覧</h1>
+    <div class="doc-meta">
+        <div class="filter-label">
+            <strong>抽出条件:</strong> {{ filter_label }}
+            （表示件数: {{ total_count }} 件）
+        </div>
+        <div class="generated-at">
+            {{ generated_at }} 印刷
+        </div>
+    </div>
+</header>
+
+<section class="summary">
+    <div class="stat safe">
+        <div class="label">有効 (&gt;180日)</div>
+        <div class="value">{{ summary.safe }}</div>
+    </div>
+    <div class="stat warning">
+        <div class="label">期限近接 (180日以内)</div>
+        <div class="value">{{ summary.warning }}</div>
+    </div>
+    <div class="stat expired">
+        <div class="label">期限切れ</div>
+        <div class="value">{{ summary.expired }}</div>
+    </div>
+    <div class="stat no_renewal">
+        <div class="label">更新不要</div>
+        <div class="value">{{ summary.no_renewal }}</div>
+    </div>
+</section>
+
+{% if certificates|length == 0 %}
+<div class="empty-state">
+    該当する資格者証がありません。
+</div>
+{% else %}
+<table class="cert-table">
+    <thead>
+        <tr>
+            <th class="col-worker">作業員</th>
+            <th class="col-group">所属</th>
+            <th class="col-qual">資格</th>
+            <th class="col-no">交付番号</th>
+            <th class="col-issued">交付日</th>
+            <th class="col-expiry">有効期限</th>
+            <th class="col-status">状態</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in certificates %}
+        <tr class="{% if c.status == 'archived' %}archived{% endif %}">
+            <td class="col-worker">
+                {{ c.worker_name }}
+                {% if c.status == 'archived' %}
+                <span class="col-archived-badge">アーカイブ</span>
+                {% endif %}
+            </td>
+            <td class="col-group">{{ c.group_name or '-' }}</td>
+            <td class="col-qual">
+                {{ c.qual_name }}
+                {% if c.qual_category %}<span class="small">／{{ c.qual_category }}</span>{% endif %}
+            </td>
+            <td class="col-no small">{{ c.certificate_no or '-' }}</td>
+            <td class="col-issued small">{{ c.issued_on or '-' }}</td>
+            <td class="col-expiry small">{{ c.expires_on or '-' }}</td>
+            <td class="col-status">
+                {% if c.bucket == 'safe' %}
+                    <span class="badge safe">有効</span>
+                {% elif c.bucket == 'far' %}
+                    <span class="badge far">残 180 日以内</span>
+                {% elif c.bucket == 'soon' %}
+                    <span class="badge soon">残 60 日以内</span>
+                {% elif c.bucket == 'urgent' %}
+                    <span class="badge urgent">残 30 日以内</span>
+                {% elif c.bucket == 'expired' %}
+                    <span class="badge expired">期限切れ</span>
+                {% else %}
+                    <span class="badge no_renewal">更新不要</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<footer class="doc-footer">
+    Factoryskills — 資格者証管理 / 印刷用一覧
+</footer>
+
+</body>
+</html>
