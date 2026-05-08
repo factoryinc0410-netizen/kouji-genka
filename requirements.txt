@@ -37,6 +37,18 @@ pywin32>=306; sys_platform == 'win32'
 pypdf>=6.0.0
 PyMuPDF>=1.24.0
 
+# === Skills: qualifications (資格者証管理) ===
+# Gemini API 公式 SDK — gemini-2.5-flash で資格者証 PDF/画像から
+# 構造化 JSON を抽出する OCR に使用。GEMINI_API_KEY (.env) が必須。
+google-genai>=1.0.0
+# 画像前処理（リサイズ・回転）に使用。
+Pillow>=10.4.0
+# PDF を画像化してサムネイル / Gemini 入力を作る。
+# 注: pdf2image は OS の poppler-utils 依存。
+#   Ubuntu/Debian: sudo apt install -y poppler-utils
+#   Windows      : poppler-windows を PATH に通す
+pdf2image>=1.17.0
+
 # === Optional (CLI monitoring - not required for web) ===
 # watchdog>=4.0.0
 # plyer>=2.1.0
