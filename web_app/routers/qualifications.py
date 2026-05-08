@@ -35,8 +35,12 @@ from datetime import date
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
+import csv
+import io
+from datetime import datetime
+
 from fastapi import HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 
 from web_app.core.config import (
     QUALIFICATIONS_MAX_FILES_PER_UPLOAD,
@@ -179,6 +183,40 @@ async def _fetch_categories(db) -> list[str]:
     return [row[0] for row in await cur.fetchall() if row[0]]
 
 
+# bucket key → 日本語ラベル。CSV/集計表示で共通利用する。
+_BUCKET_LABELS: dict[str, str] = {
+    "safe":       "有効",
+    "far":        "期限近接 (180日以内)",
+    "soon":       "期限近接 (60日以内)",
+    "urgent":     "期限近接 (30日以内)",
+    "expired":    "期限切れ",
+    "no_renewal": "更新不要",
+}
+
+
+async def count_alerts(db) -> dict[str, int]:
+    """確定済み資格者証のうち、期限近接 (warning) と期限切れ (expired) の件数を返す。
+
+    portal などの**外部画面**から件数バッジ表示用に呼び出される公開ヘルパ。
+    archived / draft は除外し、status='confirmed' のみカウントする。
+    """
+    cur = await db.execute(
+        """
+        SELECT expires_on, renewal_required
+          FROM q_certificates
+         WHERE status = 'confirmed'
+        """
+    )
+    warning = expired = 0
+    for row in await cur.fetchall():
+        bucket = _expiry_bucket(row[0], row[1])
+        if bucket == "expired":
+            expired += 1
+        elif bucket in ("far", "soon", "urgent"):
+            warning += 1
+    return {"warning": warning, "expired": expired}
+
+
 async def _fetch_upload_jobs(db) -> list[dict]:
     """進行中・確認待ちの ``q_upload_jobs`` を取得し、OCR 結果をパースして返す。
 
@@ -315,6 +353,81 @@ async def index(
             "total_count": len(all_certs),
             "filtered_count": len(filtered),
             "pending_count": pending_count,
+        },
+    )
+
+
+# CSV のヘッダー行 (Excel 互換のため UTF-8 BOM を別途付与)。
+_CSV_HEADER: tuple[str, ...] = (
+    "作業員", "所属", "資格名", "カテゴリ",
+    "交付番号", "交付機関", "交付日", "有効期限",
+    "残日数", "状態",
+)
+
+
+def _days_until(expires_on: str | None) -> str:
+    """有効期限までの残日数を文字列で返す (なし/不正は空)。"""
+    if not expires_on:
+        return ""
+    try:
+        return str((date.fromisoformat(expires_on) - date.today()).days)
+    except ValueError:
+        return ""
+
+
+@router.get("/export")
+async def export_csv(
+    q: str = "",
+    status: str = "",
+    category: str = "",
+    user: dict = Depends(get_current_user),
+):
+    """確定済み一覧を CSV でダウンロードする。
+
+    クエリパラメータは index と完全に同じ意味で、現在の絞り込み条件を維持できる。
+    StreamingResponse で行ごとに送出するため、件数が多くてもメモリを抱え込まない。
+    """
+    db = await get_db()
+    try:
+        rows = await _fetch_confirmed(db, q=q, category=category)
+        rows = _apply_status_filter(rows, status)
+    finally:
+        await db.close()
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\r\n")
+        # UTF-8 BOM (Excel が自動で UTF-8 と認識するため)
+        buf.write("﻿")
+        writer.writerow(_CSV_HEADER)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        for r in rows:
+            writer.writerow([
+                r["worker_name"],
+                r["group_name"] or "",
+                r["qual_name"],
+                r["qual_category"] or "",
+                r["certificate_no"] or "",
+                r["issuer"] or "",
+                r["issued_on"] or "",
+                r["expires_on"] or "",
+                _days_until(r["expires_on"]) if r["renewal_required"] else "",
+                _BUCKET_LABELS.get(r["bucket"], r["bucket"]),
+            ])
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"qualifications_{timestamp}.csv"
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
 

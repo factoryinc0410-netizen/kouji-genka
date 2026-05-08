@@ -1,11 +1,16 @@
 """
 ポータルルーター — ダッシュボード（部署別ツール一覧）
 """
+import logging
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
+from web_app.core.database import get_db
 from web_app.core.dependencies import get_current_user
 from web_app.core.templates import templates as _templates
+
+logger = logging.getLogger("web_app.portal")
 
 router = APIRouter(tags=["portal"])
 
@@ -66,10 +71,34 @@ DEPARTMENTS = [
 ]
 
 
+async def _qualification_alerts() -> dict[str, int]:
+    """qualifications スキルの期限アラート件数を取得する。
+
+    qualifications テーブルがまだ無い旧 DB / 起動直後でも壊れないよう、
+    例外時はゼロで握りつぶしてバナーを単に表示しない。
+    """
+    try:
+        from web_app.routers.qualifications import count_alerts
+    except ImportError:
+        return {"warning": 0, "expired": 0}
+
+    db = await get_db()
+    try:
+        return await count_alerts(db)
+    except Exception:
+        # マイグレーション直後など q_certificates 未作成のケースを想定
+        logger.exception("ポータルでの qualifications アラート集計に失敗")
+        return {"warning": 0, "expired": 0}
+    finally:
+        await db.close()
+
+
 @router.get("/", response_class=HTMLResponse)
 async def portal_page(request: Request, user: dict = Depends(get_current_user)):
     """ポータル画面（部署別ツール一覧ダッシュボード）。"""
+    qualification_alerts = await _qualification_alerts()
     return _templates.TemplateResponse(request, "portal.html", {
         "user": user,
         "departments": DEPARTMENTS,
+        "qualification_alerts": qualification_alerts,
     })

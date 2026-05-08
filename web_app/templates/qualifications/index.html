@@ -130,11 +130,21 @@
             <span class="badge bg-secondary ms-1">{{ total_count }} 件</span>
             {% endif %}
         </span>
-        {% if user.is_admin %}
-        <a href="/qualifications/upload" class="btn btn-sm btn-primary">
-            <i class="bi bi-cloud-arrow-up me-1"></i>アップロード
-        </a>
-        {% endif %}
+        <div class="d-flex gap-2">
+            {# CSV ダウンロード: 現在のフィルタ条件をクエリパラメータに引き継ぐ #}
+            {% if total_count > 0 %}
+            <a href="/qualifications/export?q={{ filters.q | urlencode }}&status={{ filters.status | urlencode }}&category={{ filters.category | urlencode }}"
+               class="btn btn-sm btn-outline-secondary"
+               title="表示中の絞り込み条件で CSV ダウンロード">
+                <i class="bi bi-download me-1"></i>CSV
+            </a>
+            {% endif %}
+            {% if user.is_admin %}
+            <a href="/qualifications/upload" class="btn btn-sm btn-primary">
+                <i class="bi bi-cloud-arrow-up me-1"></i>アップロード
+            </a>
+            {% endif %}
+        </div>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">

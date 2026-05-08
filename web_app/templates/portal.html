@@ -8,6 +8,35 @@
     <p class="text-muted">利用するツールを選択してください。</p>
 </div>
 
+{# ── 資格者証 期限アラート ───────────────────────────────────────
+   warning または expired が 1 件以上ある場合のみ表示する。
+   どちらか片方でも 0 件なら、その色のバッジは出さない。 #}
+{% set qa = qualification_alerts or {} %}
+{% if (qa.warning or 0) > 0 or (qa.expired or 0) > 0 %}
+<div class="alert alert-warning d-flex align-items-center mb-4 shadow-sm" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-3 fs-3 text-warning"></i>
+    <div class="flex-grow-1">
+        <div class="fw-bold mb-1">資格者証の確認が必要です</div>
+        <div class="small">
+            {% if qa.expired and qa.expired > 0 %}
+            <span class="badge bg-danger me-2">
+                <i class="bi bi-x-circle me-1"></i>期限切れ {{ qa.expired }} 件
+            </span>
+            {% endif %}
+            {% if qa.warning and qa.warning > 0 %}
+            <span class="badge bg-warning text-dark me-2">
+                <i class="bi bi-clock-history me-1"></i>180日以内に期限到来 {{ qa.warning }} 件
+            </span>
+            {% endif %}
+        </div>
+    </div>
+    <a href="/qualifications/?status={% if qa.expired and qa.expired > 0 %}expired{% else %}warning{% endif %}"
+       class="btn btn-sm btn-outline-dark ms-3">
+        確認する <i class="bi bi-arrow-right"></i>
+    </a>
+</div>
+{% endif %}
+
 {% for dept in departments %}
 <div class="department-section mb-5">
     <h4 class="department-header mb-3">
