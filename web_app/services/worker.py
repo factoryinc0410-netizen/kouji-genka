@@ -16,8 +16,7 @@ from web_app.core.config import (
     DATABASE_PATH,
     OUTPUT_DIR,
     COM_TEMP_DIR,
-    # 設定値の再エクスポート（外部から `worker.JOB_TIMEOUT_SECONDS` で参照されるため保持）
-    JOB_TIMEOUT_SECONDS,  # noqa: F401
+    JOB_TIMEOUT_SECONDS,
 )
 from web_app.services.job_queue import job_queue
 from web_app.services.excel_guard import (
@@ -51,7 +50,14 @@ def stop_worker() -> None:
 # ── ワーカー本体 ──────────────────────────────────────────────
 
 def _worker_main() -> None:
-    """キューから job_id を取り出し、1 件ずつ処理するループ。"""
+    """キューから payload を取り出し、1 件ずつ処理するループ。
+
+    payload は次のいずれか:
+      - ``str``                       — 注文書 (order_docs) の job_id (後方互換)
+      - ``("order_docs", job_id)``    — 明示的な指定
+      - ``("qualifications", job_id)``— 資格者証 OCR
+      - ``None``                      — シャットダウン信号
+    """
     # 起動時に孤児 Excel プロセスをチェック
     orphans = check_orphan_excel_processes()
     if orphans:
@@ -59,22 +65,80 @@ def _worker_main() -> None:
 
     logger.info("ワーカースレッド開始 — ジョブ待機中")
     while True:
-        job_id = job_queue.get()
-        if job_id is None:
+        payload = job_queue.get()
+        if payload is None:
             logger.info("シャットダウン信号受信")
             break
+
+        skill, job_id = _unpack_payload(payload)
+
         try:
-            _process_job(job_id)
+            _dispatch(skill, job_id)
         except Exception:
             # ワーカースレッド自体がクラッシュしないよう最外殻で捕捉
-            logger.exception("ジョブ処理で予期せぬ致命的エラー: %s", job_id[:8])
-            try:
-                _run_async(_update_status(
-                    job_id, "error",
-                    error_message="致命的な内部エラーが発生しました。管理者に連絡してください。",
-                ))
-            except Exception:
-                logger.exception("エラーステータス更新にも失敗: %s", job_id[:8])
+            logger.exception("ジョブ処理で予期せぬ致命的エラー: skill=%s id=%s", skill, job_id[:8])
+            _safe_mark_error(skill, job_id)
+
+
+def _unpack_payload(payload) -> tuple[str, str]:
+    """キュー要素を ``(skill, job_id)`` に正規化する。
+
+    後方互換: 単一の文字列は order_docs の job_id とみなす。
+    """
+    if isinstance(payload, str):
+        return ("order_docs", payload)
+    if isinstance(payload, tuple) and len(payload) == 2:
+        return (str(payload[0]), str(payload[1]))
+    raise ValueError(f"不正なジョブキューペイロード: {payload!r}")
+
+
+def _dispatch(skill: str, job_id: str) -> None:
+    """``skill`` キーに応じて対応するスキル別処理を呼ぶ。"""
+    if skill == "order_docs":
+        _process_job(job_id)
+    elif skill == "qualifications":
+        _process_qualifications_job(job_id)
+    else:
+        logger.error("未知のスキル: %s (job=%s)", skill, job_id[:8])
+
+
+def _safe_mark_error(skill: str, job_id: str) -> None:
+    """致命的エラーを DB に記録するベストエフォート処理。
+
+    skill ごとに対象テーブルが異なるため、ここで分岐する。
+    """
+    try:
+        if skill == "order_docs":
+            _run_async(_update_status(
+                job_id, "error",
+                error_message="致命的な内部エラーが発生しました。管理者に連絡してください。",
+            ))
+        elif skill == "qualifications":
+            from skills.qualifications import pipeline as q_pipeline
+            # ステータス更新だけを直接書く: pipeline._update_status を流用
+            import aiosqlite
+            async def _mark():
+                db = await aiosqlite.connect(str(DATABASE_PATH))
+                try:
+                    await q_pipeline._update_status(
+                        db, job_id, "error",
+                        error_message="致命的な内部エラーが発生しました。管理者に連絡してください。",
+                    )
+                finally:
+                    await db.close()
+            _run_async(_mark())
+    except Exception:
+        logger.exception("エラーステータス更新にも失敗: skill=%s id=%s", skill, job_id[:8])
+
+
+def _process_qualifications_job(job_id: str) -> None:
+    """資格者証 OCR ジョブを実行する。実体は ``skills.qualifications.pipeline``。
+
+    OCR 自体は最大 80 秒程度 (60s timeout + 1+4+16s リトライ) かかりうるので、
+    既定の 30 秒では足りない。``JOB_TIMEOUT_SECONDS`` を使う。
+    """
+    from skills.qualifications.pipeline import run_ocr_pipeline
+    _run_async(run_ocr_pipeline(job_id), timeout=JOB_TIMEOUT_SECONDS)
 
 
 def _process_job(job_id: str) -> None:
@@ -112,7 +176,7 @@ def _process_job(job_id: str) -> None:
         # ── PID トラッキング付きで COM 操作を実行 ──
         # ジョブ専用の一時作業フォルダ（他ジョブと絶対に衝突しない）
         job_work_tmp = job_com_tmp / "work"
-        with track_excel_processes() as guard:
+        with track_excel_processes():
             result = generate_from_excel(
                 excel_path=upload_path,
                 output_dir=job_output_dir,
@@ -230,12 +294,16 @@ def _create_result_zip(output_dir: Path, original_filename: str) -> Path | None:
 
 # ── asyncio ブリッジ ──────────────────────────────────────────
 
-def _run_async(coro):
-    """ワーカースレッドから asyncio コルーチンを実行する。"""
+def _run_async(coro, *, timeout: float = 30):
+    """ワーカースレッドから asyncio コルーチンを実行する。
+
+    既定タイムアウトは 30 秒 (DB ステータス更新等の高速処理向け)。
+    OCR のような長時間処理では呼び出し側で ``timeout=JOB_TIMEOUT_SECONDS`` を渡す。
+    """
     if _event_loop is None:
         raise RuntimeError("Event loop not set")
     future = asyncio.run_coroutine_threadsafe(coro, _event_loop)
-    return future.result(timeout=30)
+    return future.result(timeout=timeout)
 
 
 async def _fetch_job(job_id: str) -> dict | None:

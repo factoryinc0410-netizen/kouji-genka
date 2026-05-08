@@ -42,6 +42,8 @@ from web_app.core.config import (
 from web_app.core.database import get_db
 from web_app.core.dependencies import get_current_user, require_admin
 from web_app.core.templates import templates as _templates
+from web_app.services.job_queue import job_queue
+from skills.qualifications.schema import OCRResponse
 from skills.qualifications.storage import (
     is_allowed_extension,
     sanitize_filename,
@@ -110,21 +112,60 @@ async def _fetch_confirmed(db) -> list[dict]:
     return rows
 
 
-async def _fetch_pending(db) -> list[dict]:
+async def _fetch_upload_jobs(db) -> list[dict]:
+    """進行中・確認待ちの ``q_upload_jobs`` を取得し、OCR 結果をパースして返す。
+
+    戻り値の各 dict は q_upload_jobs の生カラムに加え:
+      - ``short_id``           : job_id の先頭 8 文字
+      - ``candidates``         : list[dict]  classify_json から展開した候補
+      - ``overall_confidence`` : float       OCRResponse.overall_confidence
+    を持つ。
+    """
     cur = await db.execute(
         """
-        SELECT  c.cert_id, c.certificate_no, c.issued_on, c.expires_on,
-                c.ocr_confidence, c.created_at,
-                w.worker_id, w.worker_name, w.group_name,
-                q.qual_id, q.name AS qual_name
-          FROM  q_certificates c
-          JOIN  cc_workers       w ON w.worker_id = c.worker_id
-          JOIN  q_qualifications q ON q.qual_id   = c.qual_id
-         WHERE  c.status = 'draft'
-         ORDER BY c.created_at DESC
+        SELECT  job_id, user_id, file_count, status,
+                classify_json, error_message,
+                created_at, updated_at
+          FROM  q_upload_jobs
+         WHERE  status != 'done'
+         ORDER BY created_at DESC
         """
     )
-    return [dict(r) for r in await cur.fetchall()]
+    jobs = [dict(r) for r in await cur.fetchall()]
+
+    for j in jobs:
+        j["short_id"] = j["job_id"][:8]
+        j["candidates"] = []
+        j["overall_confidence"] = 0.0
+
+        if not j["classify_json"]:
+            continue
+        try:
+            response = OCRResponse.model_validate_json(j["classify_json"])
+        except Exception:
+            # 壊れた JSON を出さないため defensive: ログに残しても画面は破綻させない
+            logger.exception(
+                "classify_json のパースに失敗 job=%s", j["short_id"],
+            )
+            continue
+
+        j["overall_confidence"] = response.overall_confidence
+        for c in response.candidates:
+            # フィールド単位の信頼度を平均して 1 候補の自信度にまとめる
+            fcs = [
+                v for v in c.field_confidences.model_dump().values() if v is not None
+            ]
+            avg = sum(fcs) / len(fcs) if fcs else 0.0
+            j["candidates"].append({
+                "qualification_name": c.qualification_name,
+                "category":           c.category,
+                "worker_name":        c.worker_name,
+                "issued_on":          c.issued_on,
+                "expires_on":         c.expires_on,
+                "renewal_required":   c.renewal_required,
+                "confidence":         avg,
+            })
+    return jobs
 
 
 def _summarize(rows: list[dict]) -> dict[str, int]:
@@ -147,16 +188,22 @@ def _summarize(rows: list[dict]) -> dict[str, int]:
 # ルート
 # ────────────────────────────────────────────
 
+async def _count_active_jobs(db) -> int:
+    """サブナビバッジ表示用に、未完了のアップロードジョブ数を返す。"""
+    cur = await db.execute(
+        "SELECT COUNT(*) FROM q_upload_jobs WHERE status != 'done'"
+    )
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, user: dict = Depends(get_current_user)):
     """確定済み一覧 + 期限サマリ。general（ログイン済み）に開放。"""
     db = await get_db()
     try:
         certs = await _fetch_confirmed(db)
-        pending_count_cur = await db.execute(
-            "SELECT COUNT(*) FROM q_certificates WHERE status='draft'"
-        )
-        pending_count = (await pending_count_cur.fetchone())[0]
+        pending_count = await _count_active_jobs(db)
     finally:
         await db.close()
 
@@ -176,11 +223,13 @@ async def index(request: Request, user: dict = Depends(get_current_user)):
 
 @router.get("/pending", response_class=HTMLResponse)
 async def pending(request: Request, user: dict = Depends(get_current_user)):
-    """未確定 (draft) 一覧。general（ログイン済み）に開放。"""
+    """未確定一覧 — q_upload_jobs ベース。
+
+    OCR 後の確認待ち / 進行中 / エラーのジョブをカード形式で表示する。
+    """
     db = await get_db()
     try:
-        rows = await _fetch_pending(db)
-        pending_count = len(rows)
+        jobs = await _fetch_upload_jobs(db)
     finally:
         await db.close()
 
@@ -191,8 +240,8 @@ async def pending(request: Request, user: dict = Depends(get_current_user)):
             "user": user,
             "skill_key": _SKILL_KEY,
             "active_tab": "pending",
-            "drafts": rows,
-            "pending_count": pending_count,
+            "jobs": jobs,
+            "pending_count": len(jobs),
         },
     )
 
@@ -311,6 +360,11 @@ async def upload_files(
             await db.commit()
         finally:
             await db.close()
+
+        # ── ワーカーキューに投入 ──
+        # ワーカーが落ちている (TestClient で lifespan 未起動など) 場合でも
+        # キューに残るだけで失敗にはならない。次回起動時に restore_pending_jobs が拾う。
+        job_queue.put(("qualifications", job_id))
     except Exception as e:
         # 部分的に書き出したファイルを片付けて再送出
         logger.exception("アップロード処理でエラー発生 job_id=%s", job_id)
