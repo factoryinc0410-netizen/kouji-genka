@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}資格者証の編集 — Factoryskills{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item active">編集</li>
+        </ol>
+    </nav>
+    <h3>
+        <i class="bi bi-pencil-square me-2 text-primary"></i>資格者証の編集
+        <small class="text-muted ms-2">
+            <code>#{{ cert.cert_id }}</code> — {{ cert.worker_name }} / {{ cert.qual_name }}
+        </small>
+    </h3>
+    <p class="text-muted mb-0">
+        誤登録の修正や、有効期限の更新時に使用してください。資格名を変更すると
+        マスタが自動で追加されます (既存マスタには触れません)。
+    </p>
+</div>
+
+<div class="row g-3">
+    {# ── 左: 編集フォーム ─────────────────────────────────────── #}
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <i class="bi bi-pencil me-1"></i>編集内容
+            </div>
+            <div class="card-body">
+                <form method="post" action="/qualifications/edit/{{ cert.cert_id }}" id="edit-form">
+
+                    {# 作業員 #}
+                    <div class="mb-3">
+                        <label class="form-label">
+                            作業員 <span class="text-danger">*</span>
+                        </label>
+                        <select name="worker_id" class="form-select" required>
+                            <option value="">— 作業員を選択 —</option>
+                            {% set group = namespace(current=None) %}
+                            {% for w in workers %}
+                              {% if w.group_name != group.current %}
+                                {% if not loop.first %}</optgroup>{% endif %}
+                                <optgroup label="{{ w.group_name or '(所属なし)' }}">
+                                {% set group.current = w.group_name %}
+                              {% endif %}
+                              <option value="{{ w.worker_id }}"
+                                      {% if cert.worker_id == w.worker_id %}selected{% endif %}>
+                                  {{ w.worker_name }}
+                              </option>
+                            {% endfor %}
+                            {% if workers %}</optgroup>{% endif %}
+                        </select>
+                    </div>
+
+                    {# 資格名 #}
+                    <div class="mb-3">
+                        <label class="form-label">
+                            資格名 <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" name="qualification_name"
+                               class="form-control"
+                               list="qualification-list"
+                               value="{{ cert.qual_name }}"
+                               required maxlength="120">
+                        <input type="hidden" name="category" value="{{ cert.qual_category or '' }}">
+                        <div class="form-text">
+                            既存マスタにない名前を入力すると、マスタに自動で追加されます。
+                        </div>
+                    </div>
+
+                    {# 交付番号 + 交付機関 #}
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">交付番号</label>
+                            <input type="text" name="certificate_no" class="form-control"
+                                   value="{{ cert.certificate_no or '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">交付機関</label>
+                            <input type="text" name="issuer" class="form-control"
+                                   value="{{ cert.issuer or '' }}">
+                        </div>
+                    </div>
+
+                    {# 交付日 + 有効期限 #}
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">
+                                交付日 <span class="text-danger">*</span>
+                            </label>
+                            <input type="date" name="issued_on" class="form-control"
+                                   value="{{ cert.issued_on or '' }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">有効期限</label>
+                            <input type="date" name="expires_on" class="form-control"
+                                   value="{{ cert.expires_on or '' }}">
+                            <div class="form-text">
+                                空欄の場合は「期限なし」として扱われます。
+                            </div>
+                        </div>
+                    </div>
+
+                    {# 更新の必要性 #}
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox"
+                               id="renewal-switch"
+                               name="renewal_required" value="1"
+                               {% if cert.renewal_required %}checked{% endif %}>
+                        <label class="form-check-label" for="renewal-switch">
+                            更新が必要な資格である
+                            <small class="text-muted">
+                                (チェックを外すと「更新不要」扱い)
+                            </small>
+                        </label>
+                    </div>
+
+                    {# 備考 #}
+                    <div class="mb-3">
+                        <label class="form-label">備考</label>
+                        <textarea name="notes" class="form-control" rows="3"
+                                  placeholder="補足情報があれば記入">{{ cert.notes or '' }}</textarea>
+                    </div>
+
+                    {# アクション #}
+                    <div class="d-flex justify-content-end gap-2">
+                        <a href="/qualifications/" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-lg me-1"></i>キャンセル
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check2 me-1"></i>変更を保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    {# ── 右: メタ情報 + 原本ファイル ─────────────────────────── #}
+    <div class="col-lg-4">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-1"></i>メタ情報
+            </div>
+            <div class="card-body small">
+                <dl class="row mb-0">
+                    <dt class="col-5 text-muted">登録日時</dt>
+                    <dd class="col-7">{{ cert.created_at }}</dd>
+                    <dt class="col-5 text-muted">最終更新</dt>
+                    <dd class="col-7">{{ cert.updated_at or '-' }}</dd>
+                    <dt class="col-5 text-muted">登録者 ID</dt>
+                    <dd class="col-7"><code>{{ cert.created_by or '-' }}</code></dd>
+                    {% if cert.ocr_model %}
+                    <dt class="col-5 text-muted">OCR モデル</dt>
+                    <dd class="col-7"><code>{{ cert.ocr_model }}</code></dd>
+                    {% endif %}
+                    {% if cert.ocr_confidence %}
+                    <dt class="col-5 text-muted">OCR 信頼度</dt>
+                    <dd class="col-7">{{ "%.0f"|format(cert.ocr_confidence * 100) }}%</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <i class="bi bi-files me-1"></i>原本ファイル
+                <span class="badge bg-secondary ms-1">{{ original_files|length }}</span>
+            </div>
+            <div class="card-body p-2">
+                {% if original_files %}
+                <ul class="list-unstyled mb-0 small">
+                    {% for f in original_files %}
+                    <li class="mb-1">
+                        {% if f.url %}
+                        <a href="{{ f.url }}" target="_blank" rel="noopener">
+                            <i class="bi bi-paperclip me-1"></i>{{ f.name }}
+                            <i class="bi bi-box-arrow-up-right small ms-1"></i>
+                        </a>
+                        {% else %}
+                        <span class="text-muted">
+                            <i class="bi bi-paperclip me-1"></i>{{ f.name }}
+                        </span>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted small mb-0 p-2">
+                    原本ファイルが紐づいていません。
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<datalist id="qualification-list">
+  {% for q in qualifications_master %}
+  <option value="{{ q.name }}">{{ q.category or "" }}</option>
+  {% endfor %}
+</datalist>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    'use strict';
+    const form = document.getElementById('edit-form');
+    if (!form) return;
+    form.addEventListener('submit', function () {
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>保存中...';
+        }
+    });
+})();
+</script>
+{% endblock %}

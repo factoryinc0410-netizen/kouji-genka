@@ -18,7 +18,7 @@ from web_app.core.dependencies import RequiresLoginException
 from web_app.services.worker import start_worker, stop_worker
 from web_app.services.job_queue import restore_pending_jobs
 from web_app.services.cleanup import start_cleanup_scheduler
-from web_app.routers import auth, portal, order_docs, construction_cost
+from web_app.routers import auth, portal, order_docs, construction_cost, qualifications, master
 
 logger = logging.getLogger("web_app")
 
@@ -213,6 +213,8 @@ app.include_router(auth.router)
 app.include_router(portal.router)
 app.include_router(order_docs.router)
 app.include_router(construction_cost.router)
+app.include_router(qualifications.router)
+app.include_router(master.router)
 
 
 # ── ヘルスチェック ────────────────────────────────────────────

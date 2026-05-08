@@ -111,29 +111,58 @@ async def update_job_status(
 
 
 async def restore_pending_jobs() -> int:
-    """起動時に未完了ジョブをキューに再投入する。"""
+    """起動時に未完了ジョブをキューに再投入する。
+
+    対象テーブル:
+    - ``jobs``           (注文書 order_docs) — id を文字列で投入
+    - ``q_upload_jobs``  (資格者証 qualifications) — ("qualifications", job_id) で投入
+
+    前回クラッシュ等で中間状態 (processing / ocr) に残ったジョブは
+    pending に戻してから再投入する。
+    """
     import aiosqlite as _aiosqlite
     from web_app.core.config import DATABASE_PATH
 
     db = await _aiosqlite.connect(str(DATABASE_PATH))
     db.row_factory = _aiosqlite.Row
     try:
-        # processing 状態で残っているジョブは前回クラッシュしたものなので pending に戻す
+        # ── order_docs: jobs テーブル ─────────────────────────
+        # processing で残っているジョブは前回クラッシュしたものなので pending に戻す
         await db.execute(
             "UPDATE jobs SET status='pending', updated_at=datetime('now','localtime') "
             "WHERE status='processing'"
         )
+
+        # ── qualifications: q_upload_jobs テーブル ────────────
+        # OCR 中・分類中のままで残っているジョブは pending に戻す
+        await db.execute(
+            "UPDATE q_upload_jobs SET status='pending', updated_at=datetime('now','localtime') "
+            "WHERE status IN ('ocr', 'classifying')"
+        )
         await db.commit()
 
+        # ── キュー再投入: order_docs ──────────────────────────
         cursor = await db.execute(
             "SELECT id FROM jobs WHERE status='pending' ORDER BY created_at ASC"
         )
-        rows = await cursor.fetchall()
-        for row in rows:
-            job_queue.put(row["id"])
-        count = len(rows)
-        if count > 0:
-            logger.info("未完了ジョブ %d 件をキューに復元しました", count)
-        return count
+        order_rows = await cursor.fetchall()
+        for row in order_rows:
+            job_queue.put(row["id"])  # 文字列 = order_docs (後方互換)
+
+        # ── キュー再投入: qualifications ──────────────────────
+        cursor = await db.execute(
+            "SELECT job_id FROM q_upload_jobs WHERE status='pending' ORDER BY created_at ASC"
+        )
+        q_rows = await cursor.fetchall()
+        for row in q_rows:
+            job_queue.put(("qualifications", row["job_id"]))
+
+        total = len(order_rows) + len(q_rows)
+        if total > 0:
+            logger.info(
+                "未完了ジョブを復元: order_docs=%d, qualifications=%d",
+                len(order_rows), len(q_rows),
+            )
+        return total
     finally:
         await db.close()

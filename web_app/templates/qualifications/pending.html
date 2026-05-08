@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}未確定一覧 — 資格者証管理{% endblock %}
+
+{# ─────────────────────────────────────────────────────────────────
+   信頼度バッジを統一フォーマットで描画するマクロ。
+   ≥0.9: 緑 / ≥0.7: 黄 / <0.7: 赤
+   ───────────────────────────────────────────────────────────────── #}
+{% macro confidence_badge(value) %}
+  {% set pct = "%.0f"|format(value * 100) %}
+  {% if value >= 0.9 %}
+    <span class="badge bg-success">{{ pct }}%</span>
+  {% elif value >= 0.7 %}
+    <span class="badge bg-warning text-dark">{{ pct }}%</span>
+  {% else %}
+    <span class="badge bg-danger" title="信頼度が低い候補です — 内容を必ず確認してください">
+      <i class="bi bi-exclamation-triangle me-1"></i>{{ pct }}%
+    </span>
+  {% endif %}
+{% endmacro %}
+
+{# ─────────────────────────────────────────────────────────────────
+   ジョブステータスを badge で表示するマクロ。
+   ───────────────────────────────────────────────────────────────── #}
+{% macro status_badge(status) %}
+  {% if status == 'pending' %}
+    <span class="badge bg-secondary"><i class="bi bi-hourglass me-1"></i>キュー待ち</span>
+  {% elif status == 'ocr' %}
+    <span class="badge bg-primary"><i class="bi bi-cpu me-1"></i>OCR 処理中</span>
+  {% elif status == 'classifying' %}
+    <span class="badge bg-info text-dark"><i class="bi bi-diagram-3 me-1"></i>分類中</span>
+  {% elif status == 'await_review' %}
+    <span class="badge bg-warning text-dark"><i class="bi bi-eye me-1"></i>確認待ち</span>
+  {% elif status == 'error' %}
+    <span class="badge bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>エラー</span>
+  {% else %}
+    <span class="badge bg-secondary">{{ status }}</span>
+  {% endif %}
+{% endmacro %}
+
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item active">未確定一覧</li>
+        </ol>
+    </nav>
+    <h3><i class="bi bi-hourglass-split me-2 text-warning"></i>未確定一覧</h3>
+    <p class="text-muted mb-0">
+        OCR 後、内容確認・確定がまだ済んでいないアップロードジョブの一覧です。
+        確認・修正フローは Phase 2.5 で実装予定です。
+    </p>
+</div>
+
+{% include "qualifications/_nav.html" %}
+
+<div class="mt-4"></div>
+
+{% if jobs|length == 0 %}
+<div class="card shadow-sm">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-check2-circle display-6 d-block mb-2 text-success"></i>
+        未確定のアップロードジョブはありません。
+        {% if user.is_admin %}
+        <div class="mt-3">
+            <a href="/qualifications/upload" class="btn btn-primary">
+                <i class="bi bi-cloud-arrow-up me-1"></i>新しい資格者証をアップロード
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+
+{% for job in jobs %}
+<div class="card shadow-sm mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>
+            <i class="bi bi-collection me-1"></i>
+            <code class="me-1">{{ job.short_id }}</code>
+            {{ status_badge(job.status) }}
+        </span>
+        <span class="text-muted small">
+            <i class="bi bi-files me-1"></i>{{ job.file_count }} ファイル
+            <span class="mx-2">·</span>
+            <i class="bi bi-clock me-1"></i>{{ job.created_at }}
+        </span>
+    </div>
+
+    <div class="card-body">
+        {# ── status='await_review' かつ candidates あり: OCR サマリを表示 ── #}
+        {% if job.status == 'await_review' and job.candidates|length > 0 %}
+        <p class="mb-3">
+            AI が <strong>{{ job.candidates|length }}</strong> 件の資格候補を抽出しました。
+            全体信頼度: {{ confidence_badge(job.overall_confidence) }}
+        </p>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>資格名 (推定)</th>
+                        <th>氏名 (推定)</th>
+                        <th>交付日</th>
+                        <th>有効期限</th>
+                        <th class="text-center">候補信頼度</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in job.candidates %}
+                    <tr>
+                        <td>
+                            {{ c.qualification_name or '<span class="text-muted">不明</span>'|safe }}
+                            {% if c.category %}
+                            <span class="badge bg-light text-dark border ms-1 small">{{ c.category }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ c.worker_name or '<span class="text-muted">不明</span>'|safe }}</td>
+                        <td class="small">{{ c.issued_on or '-' }}</td>
+                        <td class="small">
+                            {% if c.expires_on %}
+                                {{ c.expires_on }}
+                            {% elif not c.renewal_required %}
+                                <span class="text-muted">更新不要</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-center">{{ confidence_badge(c.confidence) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {# ── status='await_review' だが候補ゼロ ── #}
+        {% elif job.status == 'await_review' %}
+        <div class="alert alert-warning mb-0">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            OCR は完了しましたが、資格候補を抽出できませんでした。
+            画質や向きを確認のうえ、Phase 2.5 の手動確定機能で対応してください。
+        </div>
+
+        {# ── 進行中ステータス ── #}
+        {% elif job.status == 'pending' %}
+        <p class="text-muted mb-0">
+            <i class="bi bi-hourglass-split me-1"></i>
+            ワーカーがジョブを取り出すのを待っています...
+        </p>
+        {% elif job.status == 'ocr' %}
+        <p class="text-muted mb-0">
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            Gemini で OCR 処理を実行中です。完了までしばらくお待ちください。
+        </p>
+        {% elif job.status == 'classifying' %}
+        <p class="text-muted mb-0">
+            <i class="bi bi-diagram-3 me-1"></i>OCR 結果を整理しています...
+        </p>
+
+        {# ── エラー ── #}
+        {% elif job.status == 'error' %}
+        <div class="alert alert-danger mb-0">
+            <strong><i class="bi bi-x-octagon me-1"></i>エラー:</strong>
+            {{ job.error_message or "詳細不明のエラーが発生しました。" }}
+        </div>
+        {% endif %}
+    </div>
+
+    {# ── 確認・修正ボタン: classify.html へ遷移 ── #}
+    {% if user.is_admin and job.status == 'await_review' %}
+    <div class="card-footer text-end">
+        <a href="/qualifications/classify/{{ job.job_id }}" class="btn btn-sm btn-primary">
+            <i class="bi bi-magic me-1"></i>確認・修正
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}

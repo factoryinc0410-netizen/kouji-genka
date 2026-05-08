@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% block title %}OCR 結果の確認・修正 — 資格者証管理{% endblock %}
+
+{# ─────────────────────────────────────────────────────────────────
+   左右ペインの独立スクロール用スタイル。
+   - 左ペイン (プレビュー): max-height = ビューポート、内部だけ縦スクロール
+   - 右ペイン (フォーム): 同様
+   - モバイル (md 未満) では分割を解除して縦並びに切り替える
+   ───────────────────────────────────────────────────────────────── #}
+{% block head %}
+<style>
+  /* base.html の navbar (fixed-top) 高さ + container padding を引いた値 */
+  .classify-pane {
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .classify-pane.preview-pane {
+    background: #f8f9fa;
+    border-radius: .5rem;
+    padding: 1rem;
+  }
+  .classify-pane.form-pane {
+    padding-right: .5rem;  /* スクロールバー干渉回避 */
+  }
+  /* PDF/画像プレビューのカード */
+  .preview-item {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: .375rem;
+    padding: .5rem;
+    margin-bottom: 1rem;
+  }
+  .preview-item img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+  }
+  .preview-item iframe {
+    width: 100%;
+    height: 600px;
+    border: 0;
+  }
+  .preview-item .filename {
+    font-size: .875rem;
+    color: #6c757d;
+    margin-top: .25rem;
+    word-break: break-all;
+  }
+  /* 各候補フォームをカードで囲み区別をつける */
+  .candidate-card {
+    border-left: 4px solid #0d6efd;
+  }
+  /* モバイルでは独立スクロールを解除 (長いと操作しにくいため) */
+  @media (max-width: 767.98px) {
+    .classify-pane {
+      max-height: none;
+      overflow: visible;
+    }
+  }
+</style>
+{% endblock %}
+
+{# 信頼度バッジ (pending.html と同じロジック) #}
+{% macro confidence_badge(value) %}
+  {% set pct = "%.0f"|format(value * 100) %}
+  {% if value >= 0.9 %}
+    <span class="badge bg-success">{{ pct }}%</span>
+  {% elif value >= 0.7 %}
+    <span class="badge bg-warning text-dark">{{ pct }}%</span>
+  {% else %}
+    <span class="badge bg-danger" title="信頼度が低い候補です — 内容を必ず確認してください">
+      <i class="bi bi-exclamation-triangle me-1"></i>{{ pct }}%
+    </span>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/pending">未確定一覧</a></li>
+            <li class="breadcrumb-item active">OCR 結果確認</li>
+        </ol>
+    </nav>
+    <h3>
+        <i class="bi bi-magic me-2 text-primary"></i>OCR 結果の確認・修正
+        <small class="text-muted ms-2"><code>{{ job.job_id[:8] }}</code></small>
+    </h3>
+    <p class="text-muted mb-0">
+        左に原本ファイル、右に AI が抽出した内容のフォームを表示しています。
+        誤りがあれば修正のうえ「この内容で登録」を押してください。
+        全体信頼度: {{ confidence_badge(overall_confidence) }}
+    </p>
+</div>
+
+<div class="row g-3">
+    {# ── 左ペイン: ファイルプレビュー ─────────────────────────── #}
+    <div class="col-md-6">
+        <div class="classify-pane preview-pane">
+            <h5 class="mb-3">
+                <i class="bi bi-files me-1"></i>原本ファイル
+                <span class="badge bg-secondary ms-1">{{ files|length }}</span>
+            </h5>
+
+            {% if files|length == 0 %}
+            <div class="text-muted text-center py-5">
+                <i class="bi bi-inbox display-6 d-block mb-2"></i>
+                ステージングにファイルがありません。
+            </div>
+            {% endif %}
+
+            {% for f in files %}
+            <div class="preview-item">
+                {% if f.is_image %}
+                <img src="{{ f.url }}" alt="{{ f.name }}" loading="lazy">
+                {% elif f.is_pdf %}
+                <iframe src="{{ f.url }}" title="{{ f.name }}" loading="lazy"></iframe>
+                {% else %}
+                <div class="text-center py-3">
+                    <i class="bi bi-file-earmark display-6 text-muted"></i>
+                    <div class="small text-muted mt-2">プレビュー非対応の形式</div>
+                </div>
+                {% endif %}
+                <div class="filename">
+                    <i class="bi bi-paperclip me-1"></i>{{ f.name }}
+                    <a href="{{ f.url }}" target="_blank" rel="noopener" class="ms-2 small">
+                        <i class="bi bi-box-arrow-up-right"></i> 別タブで開く
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    {# ── 右ペイン: 編集フォーム ───────────────────────────────── #}
+    <div class="col-md-6">
+        <div class="classify-pane form-pane">
+            <form method="post" action="/qualifications/classify/{{ job.job_id }}" id="classify-form">
+                <input type="hidden" name="n_candidates" value="{{ candidates|length }}">
+
+                {% if candidates|length == 0 %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    AI が候補を抽出できませんでした。手動で 1 件追加して登録するには、
+                    Phase 2.6 の手動入力フローを実装する必要があります。
+                </div>
+                {% endif %}
+
+                {% for c in candidates %}
+                {% set i = loop.index0 %}
+                <div class="card candidate-card shadow-sm mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="bi bi-card-list me-1"></i>候補 {{ loop.index }}
+                            {% if c.page_indices %}
+                            <span class="text-muted small ms-2">
+                                ページ {{ c.page_indices|join(", ") }}
+                            </span>
+                            {% endif %}
+                        </span>
+                        {{ confidence_badge(c.confidence) }}
+                    </div>
+                    <div class="card-body">
+                        {# 作業員 #}
+                        <div class="mb-3">
+                            <label class="form-label">
+                                作業員 <span class="text-danger">*</span>
+                                {% if c.worker_name %}
+                                <small class="text-muted ms-2">
+                                    AI 推定: <code>{{ c.worker_name }}</code>
+                                </small>
+                                {% endif %}
+                            </label>
+                            <select name="worker_id_{{ i }}" class="form-select" required>
+                                <option value="">— 作業員を選択 —</option>
+                                {% set group = namespace(current=None) %}
+                                {% for w in workers %}
+                                  {% if w.group_name != group.current %}
+                                    {% if not loop.first %}</optgroup>{% endif %}
+                                    <optgroup label="{{ w.group_name or '(所属なし)' }}">
+                                    {% set group.current = w.group_name %}
+                                  {% endif %}
+                                  <option value="{{ w.worker_id }}"
+                                          {% if c.worker_name and c.worker_name == w.worker_name %}selected{% endif %}>
+                                      {{ w.worker_name }}
+                                  </option>
+                                {% endfor %}
+                                {% if workers %}</optgroup>{% endif %}
+                            </select>
+                            {% if not workers %}
+                            <div class="form-text text-danger">
+                                作業員マスタが空です。先に
+                                <a href="/construction-cost/workers" target="_blank">作業員単価ページ</a>
+                                から登録してください。
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {# 資格名 #}
+                        <div class="mb-3">
+                            <label class="form-label">
+                                資格名 <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" name="qualification_name_{{ i }}"
+                                   class="form-control"
+                                   list="qualification-list"
+                                   value="{{ c.qualification_name }}"
+                                   required maxlength="120">
+                            <input type="hidden" name="category_{{ i }}" value="{{ c.category }}">
+                            <div class="form-text">
+                                既存マスタから選ぶか、新しい資格名を入力すると自動で追加されます。
+                            </div>
+                        </div>
+
+                        {# 交付番号 + 交付機関 #}
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">交付番号</label>
+                                <input type="text" name="certificate_no_{{ i }}"
+                                       class="form-control" value="{{ c.certificate_no }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">交付機関</label>
+                                <input type="text" name="issuer_{{ i }}"
+                                       class="form-control" value="{{ c.issuer }}">
+                            </div>
+                        </div>
+
+                        {# 交付日 + 有効期限 #}
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">
+                                    交付日 <span class="text-danger">*</span>
+                                </label>
+                                <input type="date" name="issued_on_{{ i }}"
+                                       class="form-control" value="{{ c.issued_on }}" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">有効期限</label>
+                                <input type="date" name="expires_on_{{ i }}"
+                                       class="form-control" value="{{ c.expires_on }}">
+                            </div>
+                        </div>
+
+                        {# 更新の必要性 #}
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox"
+                                   id="renewal-{{ i }}"
+                                   name="renewal_required_{{ i }}" value="1"
+                                   {% if c.renewal_required %}checked{% endif %}>
+                            <label class="form-check-label" for="renewal-{{ i }}">
+                                更新が必要な資格である
+                                <small class="text-muted">
+                                    (チェックを外すと「更新不要」扱い)
+                                </small>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% if candidates|length > 0 %}
+                <div class="d-flex justify-content-end gap-2 mb-4">
+                    <a href="/qualifications/pending" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg me-1"></i>キャンセル
+                    </a>
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-check2-circle me-1"></i>この内容で登録
+                    </button>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+</div>
+
+{# 資格名オートコンプリート用 datalist (form 内では参照のみ) #}
+<datalist id="qualification-list">
+  {% for q in qualifications_master %}
+  <option value="{{ q.name }}">{{ q.category or "" }}</option>
+  {% endfor %}
+</datalist>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    'use strict';
+    // 送信前に二度押し防止
+    const form = document.getElementById('classify-form');
+    if (!form) return;
+    form.addEventListener('submit', function () {
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>登録中...';
+        }
+    });
+})();
+</script>
+{% endblock %}

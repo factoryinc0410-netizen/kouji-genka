@@ -1,0 +1,41 @@
+{# 資格者証管理 共通タブナビゲーション #}
+{# 使い方: {% set active_tab = "index" %} {% include "qualifications/_nav.html" %} #}
+{# 権限: 管理者専用タブは user.is_admin でガード。一般ユーザーには
+   一覧と未確定のみ表示する（Phase 1 段階）。 #}
+<ul class="nav nav-tabs">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'index' %}active{% endif %}"
+           href="/qualifications/">
+            <i class="bi bi-list-check me-1"></i>一覧
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'pending' %}active{% endif %}"
+           href="/qualifications/pending">
+            <i class="bi bi-hourglass-split me-1"></i>未確定
+            {% if pending_count and pending_count > 0 %}
+            <span class="badge bg-warning text-dark ms-1">{{ pending_count }}</span>
+            {% endif %}
+        </a>
+    </li>
+    {% if user.is_admin %}
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'upload' %}active{% endif %}"
+           href="/qualifications/upload">
+            <i class="bi bi-cloud-arrow-up me-1"></i>アップロード
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'manual_add' %}active{% endif %}"
+           href="/qualifications/manual-add">
+            <i class="bi bi-plus-square me-1"></i>手動追加
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'master' %}active{% endif %}"
+           href="/master/qualifications">
+            <i class="bi bi-collection me-1"></i>資格マスタ
+        </a>
+    </li>
+    {% endif %}
+</ul>

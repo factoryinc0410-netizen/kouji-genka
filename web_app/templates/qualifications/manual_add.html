@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}手動追加 — 資格者証管理{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item active">手動追加</li>
+        </ol>
+    </nav>
+    <h3>
+        <i class="bi bi-plus-square me-2 text-primary"></i>資格者証を手動で 1 件追加
+    </h3>
+    <p class="text-muted mb-0">
+        AI OCR をスキップして手入力で 1 件登録します。原本の画像/PDF は
+        <strong>任意</strong>（あれば添付するとプレビュー可能になります）。
+        登録と同時に <span class="badge bg-success">確定</span> 状態になり、一覧に即時反映されます。
+    </p>
+</div>
+
+{% include "qualifications/_nav.html" %}
+
+<div class="mt-4"></div>
+
+<div class="row g-3">
+    {# ── 左: 入力フォーム ─────────────────────────────────────── #}
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <i class="bi bi-pencil-square me-1"></i>登録内容
+            </div>
+            <div class="card-body">
+                <form method="post" action="/qualifications/manual-add"
+                      enctype="multipart/form-data" id="manual-add-form">
+
+                    {# 作業員 #}
+                    <div class="mb-3">
+                        <label class="form-label">
+                            作業員 <span class="text-danger">*</span>
+                        </label>
+                        <select name="worker_id" class="form-select" required>
+                            <option value="">— 作業員を選択 —</option>
+                            {% set group = namespace(current=None) %}
+                            {% for w in workers %}
+                              {% if w.group_name != group.current %}
+                                {% if not loop.first %}</optgroup>{% endif %}
+                                <optgroup label="{{ w.group_name or '(所属なし)' }}">
+                                {% set group.current = w.group_name %}
+                              {% endif %}
+                              <option value="{{ w.worker_id }}">
+                                  {{ w.worker_name }}
+                              </option>
+                            {% endfor %}
+                            {% if workers %}</optgroup>{% endif %}
+                        </select>
+                    </div>
+
+                    {# 資格名 (datalist で既存マスタから選択 + 新規入力可) #}
+                    <div class="mb-3">
+                        <label class="form-label">
+                            資格名 <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" name="qualification_name"
+                               id="qualification-name-input"
+                               class="form-control"
+                               list="qualification-list"
+                               placeholder="例: 玉掛け技能講習"
+                               required maxlength="120">
+                        <input type="hidden" name="category" id="category-hidden" value="">
+                        <div class="form-text">
+                            既存マスタにない名前を入力すると、マスタに自動で追加されます。
+                        </div>
+                    </div>
+
+                    {# 交付番号 + 交付機関 #}
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">交付番号</label>
+                            <input type="text" name="certificate_no" class="form-control"
+                                   placeholder="例: 第12345号">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">交付機関</label>
+                            <input type="text" name="issuer" class="form-control"
+                                   placeholder="例: ○○技能講習センター">
+                        </div>
+                    </div>
+
+                    {# 交付日 + 有効期限 (default_valid_years から自動計算) #}
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">
+                                交付日 <span class="text-danger">*</span>
+                            </label>
+                            <input type="date" name="issued_on" id="issued-on" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">有効期限</label>
+                            <input type="date" name="expires_on" id="expires-on" class="form-control">
+                            <div class="form-text">
+                                空欄 = 期限なし。資格マスタに有効年数が登録されている場合、交付日入力時に自動補完されます。
+                            </div>
+                        </div>
+                    </div>
+
+                    {# 更新の必要性 #}
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox"
+                               id="renewal-switch"
+                               name="renewal_required" value="1" checked>
+                        <label class="form-check-label" for="renewal-switch">
+                            更新が必要な資格である
+                            <small class="text-muted">
+                                (チェックを外すと「更新不要」扱い)
+                            </small>
+                        </label>
+                    </div>
+
+                    {# 備考 #}
+                    <div class="mb-3">
+                        <label class="form-label">備考</label>
+                        <textarea name="notes" class="form-control" rows="2"
+                                  placeholder="補足情報があれば記入"></textarea>
+                    </div>
+
+                    {# 画像/PDF (任意) #}
+                    <div class="mb-3">
+                        <label class="form-label">
+                            原本ファイル <span class="text-muted small">(任意)</span>
+                        </label>
+                        <input type="file" name="files" class="form-control"
+                               multiple
+                               accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png">
+                        <div class="form-text">
+                            PDF / JPG / PNG。最大 {{ max_files }} 枚 / 1 枚 {{ max_file_mb }} MB まで。
+                            添付しなくても登録できます。
+                        </div>
+                    </div>
+
+                    {# アクション #}
+                    <div class="d-flex justify-content-end gap-2">
+                        <a href="/qualifications/" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-lg me-1"></i>キャンセル
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check2 me-1"></i>登録する
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    {# ── 右: ヘルプ・ヒント ─────────────────────────────── #}
+    <div class="col-lg-4">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-1"></i>使い方ヒント
+            </div>
+            <div class="card-body small">
+                <p class="mb-2">
+                    <strong>OCR を使うべきか？</strong>
+                </p>
+                <ul class="mb-3">
+                    <li>原本がはっきり写っている → <a href="/qualifications/upload">アップロード</a> から OCR を使う方が早い</li>
+                    <li>OCR の信頼度が低かった / 候補が空だった → 手動追加</li>
+                    <li>原本が手元にないが台帳だけ起こしたい → 手動追加 (ファイル添付なし)</li>
+                </ul>
+                <p class="mb-1"><strong>登録後</strong>:</p>
+                <ul class="mb-0">
+                    <li><span class="badge bg-success">確定</span> 状態で一覧に即時反映</li>
+                    <li>後から <i class="bi bi-pencil"></i> 編集で修正可能</li>
+                    <li>誤登録は <i class="bi bi-trash"></i> でアーカイブ</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<datalist id="qualification-list">
+  {% for q in qualifications_master %}
+  <option value="{{ q.name }}"
+          data-category="{{ q.category or '' }}"
+          data-valid-years="{{ q.default_valid_years or '' }}">
+      {{ q.category or "" }}
+  </option>
+  {% endfor %}
+</datalist>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    'use strict';
+    const form          = document.getElementById('manual-add-form');
+    const qualInput     = document.getElementById('qualification-name-input');
+    const categoryHidden = document.getElementById('category-hidden');
+    const issuedOn      = document.getElementById('issued-on');
+    const expiresOn     = document.getElementById('expires-on');
+    const datalist      = document.getElementById('qualification-list');
+    if (!form) return;
+
+    function lookupMaster(name) {
+        const opts = datalist.querySelectorAll('option');
+        for (const o of opts) {
+            if (o.value === name) {
+                return {
+                    category: o.getAttribute('data-category') || '',
+                    validYears: parseInt(o.getAttribute('data-valid-years') || '', 10) || null,
+                };
+            }
+        }
+        return null;
+    }
+
+    function recalcExpires() {
+        if (!issuedOn.value) return;
+        const m = lookupMaster(qualInput.value.trim());
+        if (!m || !m.validYears) return;
+        // 既にユーザーが入れている値を勝手に上書きしない
+        if (expiresOn.value) return;
+        const d = new Date(issuedOn.value);
+        if (isNaN(d.getTime())) return;
+        d.setFullYear(d.getFullYear() + m.validYears);
+        // YYYY-MM-DD に整形
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        expiresOn.value = yyyy + '-' + mm + '-' + dd;
+    }
+
+    function syncCategory() {
+        const m = lookupMaster(qualInput.value.trim());
+        categoryHidden.value = m ? m.category : '';
+    }
+
+    qualInput.addEventListener('change', function () {
+        syncCategory();
+        recalcExpires();
+    });
+    issuedOn.addEventListener('change', recalcExpires);
+
+    form.addEventListener('submit', function () {
+        syncCategory();
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>登録中...';
+        }
+    });
+})();
+</script>
+{% endblock %}
