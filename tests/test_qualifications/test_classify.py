@@ -1,104 +1,18 @@
 """classify GET / POST / file 配信の統合テスト。
 
-TestClient + 一時 DB + dependency_overrides で admin 動作を再現する。
+共通の ``app_env`` fixture は ``conftest.py`` で定義している。
 """
 from __future__ import annotations
 
-import asyncio
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
 
-import pytest
 
 from skills.qualifications.schema import (
     Candidate,
     FieldConfidences,
     OCRResponse,
 )
-
-
-# ────────────────────────────────────────────
-# テスト全体共通: 一時 DB + UPLOAD_DIR を切り替えてからモジュールロード
-# ────────────────────────────────────────────
-
-@pytest.fixture(scope="module")
-def app_env():
-    """モジュールスコープで temp DB / staging を切り替え、TestClient を返す。
-
-    web_app.* モジュールは他のテストで既にロード済みの可能性があるため、
-    env だけでなくモジュール内の定数 (``_DB_PATH`` 等) を直接 monkeypatch する。
-    """
-    import shutil
-
-    from _pytest.monkeypatch import MonkeyPatch
-
-    tmp_root = Path(tempfile.mkdtemp(prefix="classify_test_"))
-    tmp_db = tmp_root / "app.db"
-    tmp_upload = tmp_root / "uploads"
-    tmp_upload.mkdir()
-    os.environ["DATABASE_PATH"] = str(tmp_db)
-    os.environ["UPLOAD_DIR"] = str(tmp_upload)
-
-    from fastapi.testclient import TestClient
-
-    from web_app.core import config as cfg
-    from web_app.core import database as db
-    from web_app.core.dependencies import get_current_user, require_admin
-    from web_app.main import app
-    from skills.qualifications import pipeline as pipeline_mod
-    from skills.qualifications import storage as storage_mod
-    from web_app.routers import qualifications as q_router
-
-    mpatch = MonkeyPatch()
-    # 既にロード済みのモジュール内に焼き込まれた絶対パスを上書きする
-    mpatch.setattr(cfg, "DATABASE_PATH", tmp_db, raising=False)
-    mpatch.setattr(cfg, "UPLOAD_DIR", tmp_upload, raising=False)
-    mpatch.setattr(db, "_DB_PATH", str(tmp_db), raising=False)
-    mpatch.setattr(pipeline_mod, "DATABASE_PATH", tmp_db, raising=False)
-    mpatch.setattr(
-        storage_mod, "QUALIFICATIONS_STAGING_ROOT",
-        tmp_upload / "qualifications", raising=False,
-    )
-    mpatch.setattr(
-        q_router, "QUALIFICATIONS_STAGING_ROOT",
-        tmp_upload / "qualifications", raising=False,
-    )
-
-    asyncio.run(db.init_db())
-
-    # users + cc_workers のシード (FK 用)
-    conn = sqlite3.connect(str(tmp_db))
-    conn.execute(
-        "INSERT INTO users (id, username, display_name, password_hash, is_admin) "
-        "VALUES ('admin-id', 'admin', '管理者', 'x', 1)"
-    )
-    conn.execute(
-        "INSERT INTO cc_workers (worker_id, worker_name, group_name, is_active) "
-        "VALUES (1, '山田太郎', 'A班', 1)"
-    )
-    conn.execute(
-        "INSERT INTO cc_workers (worker_id, worker_name, group_name, is_active) "
-        "VALUES (2, '佐藤花子', 'B班', 1)"
-    )
-    conn.commit()
-    conn.close()
-
-    admin_user = {
-        "id": "admin-id", "username": "admin",
-        "display_name": "管理者", "is_admin": 1,
-    }
-    app.dependency_overrides[get_current_user] = lambda: admin_user
-    app.dependency_overrides[require_admin] = lambda: admin_user
-
-    client = TestClient(app)
-    yield {"client": client, "db_path": tmp_db, "staging_root": tmp_upload / "qualifications"}
-
-    # 後片付け: モジュール定数を元の値へ戻し、tmp を削除
-    app.dependency_overrides.clear()
-    mpatch.undo()
-    shutil.rmtree(tmp_root, ignore_errors=True)
 
 
 def _seed_job(

@@ -17,11 +17,13 @@
 
 <div class="mt-4"></div>
 
-{# ── 期限サマリ (4 stat-cards) ─────────────────────────────────── #}
-<div class="row g-3 mb-4">
+{# ── 期限サマリ (4 stat-cards) — クリックでフィルタ適用 ─────────── #}
+{# サマリは常に **全件** ベースなので、ユーザーは絞り込み中でも俯瞰できる。 #}
+<div class="row g-3 mb-3">
     <div class="col-6 col-md-3">
         <a href="/qualifications/" class="text-decoration-none">
-            <div class="card shadow-sm h-100 border-secondary border-opacity-25">
+            <div class="card shadow-sm h-100 border-secondary border-opacity-25
+                        {% if not is_filtered %}border-2{% endif %}">
                 <div class="card-body py-3">
                     <div class="text-muted small mb-1">
                         <i class="bi bi-list-ul me-1"></i>全件
@@ -32,34 +34,89 @@
         </a>
     </div>
     <div class="col-6 col-md-3">
-        <div class="card shadow-sm h-100 border-success border-opacity-50">
-            <div class="card-body py-3">
-                <div class="text-success small mb-1">
-                    <i class="bi bi-check-circle-fill me-1"></i>有効 (>180日)
+        <a href="/qualifications/?status=safe" class="text-decoration-none">
+            <div class="card shadow-sm h-100 border-success border-opacity-50
+                        {% if filters.status == 'safe' %}border-2{% endif %}">
+                <div class="card-body py-3">
+                    <div class="text-success small mb-1">
+                        <i class="bi bi-check-circle-fill me-1"></i>有効 (>180日)
+                    </div>
+                    <div class="fs-3 fw-bold text-success">{{ summary.safe }}</div>
                 </div>
-                <div class="fs-3 fw-bold text-success">{{ summary.safe }}</div>
             </div>
-        </div>
+        </a>
     </div>
     <div class="col-6 col-md-3">
-        <div class="card shadow-sm h-100 border-warning border-opacity-50">
-            <div class="card-body py-3">
-                <div class="text-warning small mb-1">
-                    <i class="bi bi-exclamation-triangle-fill me-1"></i>期限近接 (180日以内)
+        <a href="/qualifications/?status=warning" class="text-decoration-none">
+            <div class="card shadow-sm h-100 border-warning border-opacity-50
+                        {% if filters.status == 'warning' %}border-2{% endif %}">
+                <div class="card-body py-3">
+                    <div class="text-warning small mb-1">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i>期限近接 (180日以内)
+                    </div>
+                    <div class="fs-3 fw-bold text-warning">{{ summary.warning }}</div>
                 </div>
-                <div class="fs-3 fw-bold text-warning">{{ summary.warning }}</div>
             </div>
-        </div>
+        </a>
     </div>
     <div class="col-6 col-md-3">
-        <div class="card shadow-sm h-100 border-danger border-opacity-50">
-            <div class="card-body py-3">
-                <div class="text-danger small mb-1">
-                    <i class="bi bi-x-circle-fill me-1"></i>期限切れ
+        <a href="/qualifications/?status=expired" class="text-decoration-none">
+            <div class="card shadow-sm h-100 border-danger border-opacity-50
+                        {% if filters.status == 'expired' %}border-2{% endif %}">
+                <div class="card-body py-3">
+                    <div class="text-danger small mb-1">
+                        <i class="bi bi-x-circle-fill me-1"></i>期限切れ
+                    </div>
+                    <div class="fs-3 fw-bold text-danger">{{ summary.expired }}</div>
                 </div>
-                <div class="fs-3 fw-bold text-danger">{{ summary.expired }}</div>
             </div>
-        </div>
+        </a>
+    </div>
+</div>
+
+{# ── 検索・絞り込みフォーム ───────────────────────────────────── #}
+<div class="card shadow-sm mb-3">
+    <div class="card-body py-3">
+        <form method="get" action="/qualifications/" id="filter-form" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small mb-1">
+                    <i class="bi bi-search me-1"></i>キーワード
+                </label>
+                <input type="text" name="q" class="form-control"
+                       placeholder="氏名 / 資格名 / 交付番号"
+                       value="{{ filters.q }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small mb-1">状態</label>
+                <select name="status" class="form-select">
+                    <option value="" {% if not filters.status %}selected{% endif %}>全て</option>
+                    <option value="safe"       {% if filters.status == 'safe' %}selected{% endif %}>有効 (&gt;180日)</option>
+                    <option value="warning"    {% if filters.status == 'warning' %}selected{% endif %}>期限近接 (180日以内)</option>
+                    <option value="expired"    {% if filters.status == 'expired' %}selected{% endif %}>期限切れ</option>
+                    <option value="no_renewal" {% if filters.status == 'no_renewal' %}selected{% endif %}>更新不要</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small mb-1">カテゴリ</label>
+                <select name="category" class="form-select">
+                    <option value="" {% if not filters.category %}selected{% endif %}>全カテゴリ</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat }}" {% if filters.category == cat %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary flex-fill">
+                    <i class="bi bi-funnel me-1"></i>絞り込む
+                </button>
+                {% if is_filtered %}
+                <a href="/qualifications/" class="btn btn-outline-secondary"
+                   title="フィルタをクリア">
+                    <i class="bi bi-x-lg"></i>
+                </a>
+                {% endif %}
+            </div>
+        </form>
     </div>
 </div>
 
@@ -67,7 +124,11 @@
 <div class="card shadow-sm">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-table me-1"></i>資格者証一覧
-            <span class="badge bg-secondary ms-1">{{ certificates|length }}</span>
+            {% if is_filtered %}
+            <span class="badge bg-primary ms-1">{{ filtered_count }} / {{ total_count }} 件</span>
+            {% else %}
+            <span class="badge bg-secondary ms-1">{{ total_count }} 件</span>
+            {% endif %}
         </span>
         {% if user.is_admin %}
         <a href="/qualifications/upload" class="btn btn-sm btn-primary">
@@ -87,6 +148,9 @@
                         <th>交付日</th>
                         <th>有効期限</th>
                         <th class="text-center">残日数</th>
+                        {% if user.is_admin %}
+                        <th class="text-center" style="width: 130px;">操作</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -118,12 +182,35 @@
                                 <span class="badge bg-secondary">更新不要</span>
                             {% endif %}
                         </td>
+                        {% if user.is_admin %}
+                        <td class="text-center">
+                            <a href="/qualifications/edit/{{ c.cert_id }}"
+                               class="btn btn-sm btn-outline-primary"
+                               title="編集">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <form method="post"
+                                  action="/qualifications/delete/{{ c.cert_id }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('「{{ c.worker_name }} / {{ c.qual_name }}」をアーカイブします。よろしいですか？');">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="アーカイブ">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                     {% if certificates|length == 0 %}
                     <tr>
-                        <td colspan="7" class="text-center text-muted py-5">
+                        <td colspan="{{ 8 if user.is_admin else 7 }}" class="text-center text-muted py-5">
                             <i class="bi bi-inbox display-6 d-block mb-2"></i>
+                            {% if is_filtered %}
+                            該当する資格者証がありません。
+                            <div class="mt-2 small">
+                                <a href="/qualifications/">フィルタをクリア</a>して全件を表示
+                            </div>
+                            {% else %}
                             まだ資格者証は登録されていません。
                             {% if user.is_admin %}
                             <div class="mt-3">
@@ -131,6 +218,7 @@
                                     <i class="bi bi-cloud-arrow-up me-1"></i>最初の資格者証をアップロード
                                 </a>
                             </div>
+                            {% endif %}
                             {% endif %}
                         </td>
                     </tr>

@@ -96,26 +96,87 @@ def _expiry_bucket(expires_on: str | None, renewal_required: int) -> str:
 # データ取得ヘルパ
 # ────────────────────────────────────────────
 
-async def _fetch_confirmed(db) -> list[dict]:
-    """確定済み資格者証を作業員・資格マスタと JOIN して取得する。"""
-    cur = await db.execute(
-        """
+async def _fetch_confirmed(
+    db,
+    *,
+    q: str | None = None,
+    category: str | None = None,
+) -> list[dict]:
+    """確定済み資格者証を作業員・資格マスタと JOIN して取得する。
+
+    SQL レベルで適用するフィルタ:
+      - ``q``        : worker_name / qual_name / certificate_no を LIKE で部分一致
+      - ``category`` : q_qualifications.category の完全一致
+
+    state フィルタ (bucket ベース) は呼び出し側で ``_apply_status_filter`` を使って
+    Python 側でかける (有効期限の比較が今日依存のため SQL より素直)。
+    """
+    where = ["c.status = 'confirmed'"]
+    params: list = []
+
+    q_clean = (q or "").strip()
+    if q_clean:
+        where.append(
+            "(w.worker_name LIKE ? OR ql.name LIKE ? OR c.certificate_no LIKE ?)"
+        )
+        like = f"%{q_clean}%"
+        params.extend([like, like, like])
+
+    cat_clean = (category or "").strip()
+    if cat_clean:
+        where.append("ql.category = ?")
+        params.append(cat_clean)
+
+    sql = f"""
         SELECT  c.cert_id, c.certificate_no, c.issuer,
                 c.issued_on, c.expires_on, c.renewal_required,
                 c.notes, c.status, c.ocr_confidence,
                 w.worker_id, w.worker_name, w.group_name,
-                q.qual_id, q.name AS qual_name, q.category AS qual_category
+                ql.qual_id, ql.name AS qual_name, ql.category AS qual_category
           FROM  q_certificates c
-          JOIN  cc_workers       w ON w.worker_id = c.worker_id
-          JOIN  q_qualifications q ON q.qual_id   = c.qual_id
-         WHERE  c.status = 'confirmed'
+          JOIN  cc_workers       w  ON  w.worker_id = c.worker_id
+          JOIN  q_qualifications ql ON ql.qual_id   = c.qual_id
+         WHERE  {' AND '.join(where)}
          ORDER BY c.expires_on IS NULL, c.expires_on, w.worker_name
-        """
-    )
+    """
+    cur = await db.execute(sql, params)
     rows = [dict(r) for r in await cur.fetchall()]
     for r in rows:
         r["bucket"] = _expiry_bucket(r["expires_on"], r["renewal_required"])
     return rows
+
+
+# 状態フィルタ key → bucket 集合のマッピング。
+# 'all' / None は「フィルタなし」と等価扱い (テンプレート側の <select> 値と対応)。
+_STATUS_FILTER_BUCKETS: dict[str, frozenset[str]] = {
+    "safe":       frozenset({"safe"}),
+    "warning":    frozenset({"far", "soon", "urgent"}),
+    "expired":    frozenset({"expired"}),
+    "no_renewal": frozenset({"no_renewal"}),
+}
+
+
+def _apply_status_filter(rows: list[dict], status: str | None) -> list[dict]:
+    """残日数バケット (>180/180-61/...) によるフィルタを Python 側でかける。"""
+    if not status or status == "all":
+        return rows
+    allowed = _STATUS_FILTER_BUCKETS.get(status)
+    if allowed is None:
+        return rows  # 未知の値は無視
+    return [r for r in rows if r["bucket"] in allowed]
+
+
+async def _fetch_categories(db) -> list[str]:
+    """フィルタドロップダウン用に q_qualifications.category の DISTINCT 一覧を返す。"""
+    cur = await db.execute(
+        """
+        SELECT DISTINCT category
+          FROM q_qualifications
+         WHERE is_active = 1 AND category != ''
+         ORDER BY category
+        """
+    )
+    return [row[0] for row in await cur.fetchall() if row[0]]
 
 
 async def _fetch_upload_jobs(db) -> list[dict]:
@@ -204,14 +265,40 @@ async def _count_active_jobs(db) -> int:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request, user: dict = Depends(get_current_user)):
-    """確定済み一覧 + 期限サマリ。general（ログイン済み）に開放。"""
+async def index(
+    request: Request,
+    q: str = "",
+    status: str = "",
+    category: str = "",
+    user: dict = Depends(get_current_user),
+):
+    """確定済み一覧 + 期限サマリ。general (ログイン済み) に開放。
+
+    クエリパラメータ:
+      - ``q``        : キーワード (氏名 / 資格名 / 交付番号 のいずれかに部分一致)
+      - ``status``   : safe / warning / expired / no_renewal / all
+      - ``category`` : q_qualifications.category の完全一致
+
+    サマリカードは**フィルタを通さない全件**で集計する (ユーザーの俯瞰用)。
+    """
     db = await get_db()
     try:
-        certs = await _fetch_confirmed(db)
+        # 全件取得 (サマリ用、無条件)
+        all_certs = await _fetch_confirmed(db)
+        # フィルタ適用 (テーブル表示用)
+        filtered = await _fetch_confirmed(db, q=q, category=category)
+        filtered = _apply_status_filter(filtered, status)
+        categories = await _fetch_categories(db)
         pending_count = await _count_active_jobs(db)
     finally:
         await db.close()
+
+    filters = {
+        "q": q.strip(),
+        "status": status.strip(),
+        "category": category.strip(),
+    }
+    is_filtered = bool(filters["q"] or filters["status"] or filters["category"])
 
     return _templates.TemplateResponse(
         request,
@@ -220,8 +307,13 @@ async def index(request: Request, user: dict = Depends(get_current_user)):
             "user": user,
             "skill_key": _SKILL_KEY,
             "active_tab": "index",
-            "certificates": certs,
-            "summary": _summarize(certs),
+            "certificates": filtered,
+            "summary": _summarize(all_certs),
+            "categories": categories,
+            "filters": filters,
+            "is_filtered": is_filtered,
+            "total_count": len(all_certs),
+            "filtered_count": len(filtered),
             "pending_count": pending_count,
         },
     )
@@ -670,3 +762,207 @@ def _json_dumps(value) -> str:
     """JSON dumps (順序保持・日本語そのまま)。Python 標準で十分。"""
     import json as _json
     return _json.dumps(value, ensure_ascii=False)
+
+
+# ────────────────────────────────────────────
+# 編集 / 削除 (Phase 3.1)
+# ────────────────────────────────────────────
+
+async def _fetch_certificate(db, cert_id: int) -> dict | None:
+    """1 件の q_certificates を作業員・資格マスタと JOIN して取得する。"""
+    cur = await db.execute(
+        """
+        SELECT  c.*,
+                w.worker_name, w.group_name,
+                ql.name AS qual_name, ql.category AS qual_category
+          FROM  q_certificates c
+          JOIN  cc_workers       w  ON  w.worker_id = c.worker_id
+          JOIN  q_qualifications ql ON ql.qual_id   = c.qual_id
+         WHERE  c.cert_id = ?
+        """,
+        (cert_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+def _parse_original_files(original_files_json: str | None) -> list[dict]:
+    """``original_files_json`` (例: ``["qualifications/<jid>/<name>", ...]``) を
+    プレビュー用の {name, url} dict に変換する。
+
+    パスが想定外なら url=None を返してテンプレート側で「未参照」表示にする。
+    """
+    if not original_files_json:
+        return []
+    import json as _json
+    try:
+        paths = _json.loads(original_files_json)
+    except Exception:
+        return []
+    out: list[dict] = []
+    for p in paths:
+        # パスは "qualifications/<job_id>/<filename>" の形を期待
+        parts = str(p).split("/")
+        if len(parts) >= 3 and parts[0] == "qualifications":
+            job_id, filename = parts[1], parts[-1]
+            out.append({
+                "name": filename,
+                "url":  f"/qualifications/files/{job_id}/{filename}",
+            })
+        else:
+            out.append({"name": str(p), "url": None})
+    return out
+
+
+@router.get("/edit/{cert_id}", response_class=HTMLResponse)
+async def edit_page(
+    request: Request,
+    cert_id: int,
+    user: dict = Depends(require_admin),
+):
+    """1 件の確定済み資格者証を編集する画面。admin のみ。"""
+    db = await get_db()
+    try:
+        cert = await _fetch_certificate(db, cert_id)
+        if cert is None:
+            raise HTTPException(status_code=404, detail="資格者証が見つかりません")
+        if cert["status"] == "archived":
+            raise HTTPException(status_code=410, detail="この資格者証は削除済みです")
+        workers = await _fetch_workers(db)
+        quals_master = await _fetch_qualifications_master(db)
+    finally:
+        await db.close()
+
+    original_files = _parse_original_files(cert.get("original_files_json"))
+
+    return _templates.TemplateResponse(
+        request,
+        "qualifications/edit.html",
+        {
+            "user": user,
+            "skill_key": _SKILL_KEY,
+            "active_tab": "index",
+            "cert": cert,
+            "workers": workers,
+            "qualifications_master": quals_master,
+            "original_files": original_files,
+        },
+    )
+
+
+@router.post("/edit/{cert_id}")
+async def edit_submit(
+    request: Request,
+    cert_id: int,
+    user: dict = Depends(require_admin),
+):
+    """編集フォーム送信を受けて q_certificates を更新する。
+
+    資格名が既存マスタに無ければ ``q_qualifications`` を自動で追加する
+    (classify と同じ ``_ensure_qualification`` を流用)。
+    """
+    form = await request.form()
+
+    qual_name = (form.get("qualification_name", "") or "").strip()
+    category  = (form.get("category", "") or "").strip()
+    try:
+        worker_id = int(form.get("worker_id", "") or "0")
+    except ValueError:
+        worker_id = 0
+    certificate_no = (form.get("certificate_no", "") or "").strip() or None
+    issuer         = (form.get("issuer", "") or "").strip() or None
+    issued_on      = (form.get("issued_on", "") or "").strip() or None
+    expires_on     = (form.get("expires_on", "") or "").strip() or None
+    notes          = (form.get("notes", "") or "").strip() or None
+    renewal_required = (form.get("renewal_required", "") == "1")
+
+    if worker_id <= 0:
+        raise HTTPException(status_code=400, detail="作業員を選択してください")
+    if not qual_name:
+        raise HTTPException(status_code=400, detail="資格名は必須です")
+    if not issued_on:
+        raise HTTPException(status_code=400, detail="交付日は必須です")
+
+    db = await get_db()
+    try:
+        # 存在確認 (archived は編集不可)
+        cur = await db.execute(
+            "SELECT status FROM q_certificates WHERE cert_id = ?", (cert_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="資格者証が見つかりません")
+        if row["status"] == "archived":
+            raise HTTPException(status_code=410, detail="削除済みの資格者証は編集できません")
+
+        qual_id = await _ensure_qualification(db, qual_name, category)
+        await db.execute(
+            """
+            UPDATE q_certificates
+               SET worker_id        = ?,
+                   qual_id          = ?,
+                   certificate_no   = ?,
+                   issuer           = ?,
+                   issued_on        = ?,
+                   expires_on       = ?,
+                   renewal_required = ?,
+                   notes            = ?,
+                   updated_at       = datetime('now','localtime')
+             WHERE cert_id = ?
+            """,
+            (
+                worker_id, qual_id, certificate_no, issuer,
+                issued_on, expires_on, 1 if renewal_required else 0,
+                notes, cert_id,
+            ),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    logger.info(
+        "qualifications certificate 更新: cert_id=%d user=%s",
+        cert_id, user.get("username"),
+    )
+    return RedirectResponse(url="/qualifications/", status_code=303)
+
+
+@router.post("/delete/{cert_id}")
+async def delete_certificate(
+    cert_id: int,
+    user: dict = Depends(require_admin),
+):
+    """資格者証を archive する (物理削除はしない)。admin のみ。
+
+    DELETE ではなく ``status='archived'`` への更新で履歴は保持する。
+    archived 行は ``_fetch_confirmed`` の WHERE 句で除外されるため、
+    一覧 / 編集画面からは消える。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT status FROM q_certificates WHERE cert_id = ?", (cert_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="資格者証が見つかりません")
+        # 既に archived でも 200 を返す (idempotent)
+        if row["status"] != "archived":
+            await db.execute(
+                """
+                UPDATE q_certificates
+                   SET status     = 'archived',
+                       updated_at = datetime('now','localtime')
+                 WHERE cert_id = ?
+                """,
+                (cert_id,),
+            )
+            await db.commit()
+            logger.info(
+                "qualifications certificate アーカイブ: cert_id=%d user=%s",
+                cert_id, user.get("username"),
+            )
+    finally:
+        await db.close()
+
+    return RedirectResponse(url="/qualifications/", status_code=303)
