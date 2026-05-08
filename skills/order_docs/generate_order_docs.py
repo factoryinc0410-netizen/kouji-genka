@@ -167,7 +167,6 @@ def generate_for_vendor(
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         shodaku_stamped = None
-        shinkyuu_stamped = None
 
         # ── 内訳書データの先行抽出（JV 判定を表紙スタンプに反映するため） ──
         # 「下請代金内訳書」シートの「(代表構成員)」ラベル有無で JV/非 JV を
@@ -541,24 +540,19 @@ def generate_from_excel(
             batch.error = "業者データが 0 件です。依頼書の内容を確認してください。"
             return batch
 
-  # ── 1.5) GUI 確認画面（サーバー運用のための自動化） ──
-        # サーバー環境では画面が出せないため、確認をスキップして自動で進めます
+        # ── 1.5) GUI 確認画面（現在は無効化中） ──
+        # 元はここで Tkinter ベースの show_confirm_dialog (skills/order_docs/
+        # gui_confirm.py) を呼び、業者一覧をユーザーに確認させていた。
+        # Linux サーバ運用では Tkinter が使えず import 時点で失敗するため、
+        # 28 行目の import 文ごとコメントアウトして呼び出しを停止している
+        # (詳細は skills/order_docs/CLAUDE.md §3.3 OS 共通の注意 を参照)。
+        #
+        # 復活させる場合は use_gui=True 経路で lazy import + 例外時 fallback を
+        # 実装し、確認ステップを再度組み込むこと。それまでは use_gui の値に関わらず
+        # 抽出済み vendor_list をそのまま採用して続行する。
         if use_gui and not confirmed_vendors:
-            # confirmed = show_confirm_dialog(vendor_list) # コメントアウト
-            # if confirmed is None:
-            #     batch.error = "ユーザーによりキャンセルされました。"
-            #     return batch
-            # vendor_list = confirmed
-            
-            # 何もせず、元の vendor_list をそのまま使って続行します
+            # 確認ステップは行わず素通り。
             pass
-
-        if use_gui and not confirmed_vendors:
-            confirmed = show_confirm_dialog(vendor_list)
-            if confirmed is None:
-                batch.error = "ユーザーによりキャンセルされました。"
-                return batch
-            vendor_list = confirmed
 
         batch.total_vendors = len(vendor_list)
         batch.koji_kenmei = vendor_list[0].get("koji_kenmei")
