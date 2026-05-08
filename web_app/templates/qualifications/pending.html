@@ -167,14 +167,12 @@
         {% endif %}
     </div>
 
-    {# ── 確認・修正ボタン (Phase 2.5 で活性化予定) ── #}
+    {# ── 確認・修正ボタン: classify.html へ遷移 ── #}
     {% if user.is_admin and job.status == 'await_review' %}
     <div class="card-footer text-end">
-        <button type="button" class="btn btn-sm btn-primary" disabled
-                title="Phase 2.5 で実装予定">
+        <a href="/qualifications/classify/{{ job.job_id }}" class="btn btn-sm btn-primary">
             <i class="bi bi-magic me-1"></i>確認・修正
-            <span class="badge bg-light text-dark ms-1">準備中</span>
-        </button>
+        </a>
     </div>
     {% endif %}
 </div>

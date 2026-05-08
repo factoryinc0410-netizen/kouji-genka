@@ -35,17 +35,23 @@ from datetime import date
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from fastapi import HTTPException
+from fastapi.responses import RedirectResponse
+
 from web_app.core.config import (
     QUALIFICATIONS_MAX_FILES_PER_UPLOAD,
     QUALIFICATIONS_MAX_FILE_MB,
 )
 from web_app.core.database import get_db
 from web_app.core.dependencies import get_current_user, require_admin
+from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
 from web_app.services.job_queue import job_queue
 from skills.qualifications.schema import OCRResponse
 from skills.qualifications.storage import (
+    QUALIFICATIONS_STAGING_ROOT,
     is_allowed_extension,
+    list_staged_files,
     sanitize_filename,
     staging_dir_for,
 )
@@ -385,7 +391,282 @@ async def upload_files(
             "file_count": len(contents),
             "status": "pending",
             "saved_files": [p.rsplit("/", 1)[-1] for p in saved_paths],
-            # Phase 2 で classify 画面に飛ばす想定。今は upload 画面に留まる。
-            "next_url": None,
+            "next_url": f"/qualifications/classify/{job_id}",
         }
     )
+
+
+# ────────────────────────────────────────────
+# Classify (OCR 結果の確認・修正・確定) — Phase 2.5
+# ────────────────────────────────────────────
+
+# ファイルプレビュー (左ペイン) で参照される拡張子。
+# safe_file_response が path 検証を行うので拡張子チェックは UI 補助のみ。
+_PREVIEW_MIME_HINT: dict[str, str] = {
+    ".pdf":  "application/pdf",
+    ".png":  "image/png",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+
+
+async def _fetch_workers(db) -> list[dict]:
+    """cc_workers から在職中の作業員を読み込む (作業員ドロップダウン用)。"""
+    cur = await db.execute(
+        """
+        SELECT worker_id, worker_name, group_name
+          FROM cc_workers
+         WHERE is_active = 1
+         ORDER BY group_name, worker_name
+        """
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def _fetch_qualifications_master(db) -> list[dict]:
+    """q_qualifications マスタを取得 (資格名のオートコンプリート用)。"""
+    cur = await db.execute(
+        """
+        SELECT qual_id, name, category, default_valid_years
+          FROM q_qualifications
+         WHERE is_active = 1
+         ORDER BY display_order, name
+        """
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
+def _shape_candidates_for_form(response: OCRResponse) -> list[dict]:
+    """OCRResponse → form 表示用の dict リストに整形する。"""
+    out: list[dict] = []
+    for c in response.candidates:
+        fcs = [v for v in c.field_confidences.model_dump().values() if v is not None]
+        avg = sum(fcs) / len(fcs) if fcs else 0.0
+        out.append({
+            "qualification_name": c.qualification_name or "",
+            "category":           c.category or "",
+            "worker_name":        c.worker_name or "",
+            "certificate_no":     c.certificate_no or "",
+            "issuer":             c.issuer or "",
+            "issued_on":          c.issued_on or "",
+            "expires_on":         c.expires_on or "",
+            "renewal_required":   bool(c.renewal_required),
+            "page_indices":       c.page_indices,
+            "confidence":         avg,
+        })
+    return out
+
+
+@router.get("/classify/{job_id}", response_class=HTMLResponse)
+async def classify_page(
+    request: Request,
+    job_id: str,
+    user: dict = Depends(require_admin),
+):
+    """OCR 結果の確認・修正画面を返す。admin のみ。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM q_upload_jobs WHERE job_id = ?", (job_id,)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        job = dict(row)
+
+        if job["status"] not in ("await_review", "ocr"):
+            # ocr 中は OCR 完了待ちなので少しだけ許容、それ以外は pending に戻す
+            return RedirectResponse(
+                url="/qualifications/pending", status_code=303,
+            )
+
+        # OCR 結果をパース (壊れた JSON でも落ちないように)
+        candidates: list[dict] = []
+        overall_confidence = 0.0
+        if job["classify_json"]:
+            try:
+                response = OCRResponse.model_validate_json(job["classify_json"])
+                candidates = _shape_candidates_for_form(response)
+                overall_confidence = response.overall_confidence
+            except Exception:
+                logger.exception("classify_json パース失敗 job=%s", job_id[:8])
+
+        # ファイルプレビュー用: ステージングのファイル一覧
+        files = []
+        for p in list_staged_files(job_id):
+            files.append({
+                "name": p.name,
+                "url":  f"/qualifications/files/{job_id}/{p.name}",
+                "is_image": p.suffix.lower() in (".png", ".jpg", ".jpeg"),
+                "is_pdf":   p.suffix.lower() == ".pdf",
+            })
+
+        workers       = await _fetch_workers(db)
+        quals_master  = await _fetch_qualifications_master(db)
+    finally:
+        await db.close()
+
+    return _templates.TemplateResponse(
+        request,
+        "qualifications/classify.html",
+        {
+            "user": user,
+            "skill_key": _SKILL_KEY,
+            "active_tab": "pending",
+            "job": job,
+            "files": files,
+            "candidates": candidates,
+            "overall_confidence": overall_confidence,
+            "workers": workers,
+            "qualifications_master": quals_master,
+        },
+    )
+
+
+@router.get("/files/{job_id}/{filename}")
+async def serve_staged_file(
+    job_id: str,
+    filename: str,
+    user: dict = Depends(require_admin),
+):
+    """staging ディレクトリのファイルを安全に配信する (左ペインプレビュー用)。
+
+    safe_file_response が path 解決を行うため、``..`` 等のトラバーサル試行は 404 になる。
+    """
+    base = QUALIFICATIONS_STAGING_ROOT / job_id
+    target = base / filename
+    suffix = target.suffix.lower()
+    media_type = _PREVIEW_MIME_HINT.get(suffix)
+    return safe_file_response(
+        target, base_dir=base,
+        filename=filename, media_type=media_type,
+    )
+
+
+async def _ensure_qualification(
+    db, name: str, category: str | None = None,
+) -> int:
+    """資格マスタに ``name`` が無ければ追加し qual_id を返す。"""
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="資格名は必須です")
+    cur = await db.execute(
+        "SELECT qual_id FROM q_qualifications WHERE name = ?", (name,),
+    )
+    row = await cur.fetchone()
+    if row is not None:
+        return row[0]
+    # 新規追加
+    cur = await db.execute(
+        """
+        INSERT INTO q_qualifications (name, category, renewal_required)
+        VALUES (?, ?, 1)
+        """,
+        (name, (category or "").strip() or ""),
+    )
+    qual_id = cur.lastrowid
+    logger.info("資格マスタに新規追加: %s (qual_id=%d)", name, qual_id)
+    return int(qual_id)
+
+
+@router.post("/classify/{job_id}")
+async def classify_submit(
+    request: Request,
+    job_id: str,
+    user: dict = Depends(require_admin),
+):
+    """フォーム送信を受け、各候補を q_certificates(status='confirmed') に確定登録する。"""
+    form = await request.form()
+    try:
+        n_candidates = int(form.get("n_candidates", "0"))
+    except ValueError:
+        n_candidates = 0
+    if n_candidates < 1:
+        raise HTTPException(status_code=400, detail="登録する候補がありません")
+
+    db = await get_db()
+    created: list[int] = []
+    try:
+        # ジョブ存在 + 状態確認
+        cur = await db.execute(
+            "SELECT status, classify_json FROM q_upload_jobs WHERE job_id = ?",
+            (job_id,),
+        )
+        job_row = await cur.fetchone()
+        if job_row is None:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        if job_row["status"] not in ("await_review", "ocr"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"このジョブは確定済みです (status={job_row['status']})",
+            )
+
+        # staging のファイル群を original_files_json に記録
+        staged = list_staged_files(job_id)
+        original_files_json = _json_dumps(
+            [str(p.relative_to(QUALIFICATIONS_STAGING_ROOT.parent)) for p in staged]
+        )
+
+        for i in range(n_candidates):
+            qual_name = (form.get(f"qualification_name_{i}", "") or "").strip()
+            category  = (form.get(f"category_{i}", "") or "").strip()
+            try:
+                worker_id = int(form.get(f"worker_id_{i}", "") or "0")
+            except ValueError:
+                worker_id = 0
+            certificate_no = (form.get(f"certificate_no_{i}", "") or "").strip() or None
+            issuer         = (form.get(f"issuer_{i}", "") or "").strip() or None
+            issued_on      = (form.get(f"issued_on_{i}", "") or "").strip() or None
+            expires_on     = (form.get(f"expires_on_{i}", "") or "").strip() or None
+            renewal_required = (form.get(f"renewal_required_{i}", "") == "1")
+
+            if worker_id <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"候補 {i + 1}: 作業員を選択してください",
+                )
+
+            qual_id = await _ensure_qualification(db, qual_name, category)
+            cur = await db.execute(
+                """
+                INSERT INTO q_certificates (
+                    worker_id, qual_id, certificate_no, issuer,
+                    issued_on, expires_on, renewal_required,
+                    status, original_files_json,
+                    ocr_raw_json, ocr_confidence, ocr_model,
+                    created_by, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?,
+                        ?, NULL, NULL, ?, datetime('now','localtime'), datetime('now','localtime'))
+                """,
+                (
+                    worker_id, qual_id, certificate_no, issuer,
+                    issued_on, expires_on, 1 if renewal_required else 0,
+                    original_files_json,
+                    job_row["classify_json"], user["id"],
+                ),
+            )
+            created.append(int(cur.lastrowid))
+
+        # ジョブを done に
+        await db.execute(
+            "UPDATE q_upload_jobs SET status='done', updated_at=datetime('now','localtime') "
+            "WHERE job_id = ?",
+            (job_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    logger.info(
+        "qualifications classify 確定: job=%s certs=%d user=%s",
+        job_id[:8], len(created), user.get("username"),
+    )
+    # 一覧 (確定済み) にリダイレクト
+    return RedirectResponse(url="/qualifications/", status_code=303)
+
+
+def _json_dumps(value) -> str:
+    """JSON dumps (順序保持・日本語そのまま)。Python 標準で十分。"""
+    import json as _json
+    return _json.dumps(value, ensure_ascii=False)
