@@ -109,17 +109,22 @@ async def _fetch_confirmed(
     *,
     q: str | None = None,
     category: str | None = None,
+    include_archived: bool = False,
 ) -> list[dict]:
     """確定済み資格者証を作業員・資格マスタと JOIN して取得する。
 
     SQL レベルで適用するフィルタ:
-      - ``q``        : worker_name / qual_name / certificate_no を LIKE で部分一致
-      - ``category`` : q_qualifications.category の完全一致
+      - ``q``                : worker_name / qual_name / certificate_no を LIKE で部分一致
+      - ``category``         : q_qualifications.category の完全一致
+      - ``include_archived`` : true なら archived も含める (一覧の「アーカイブ含む」表示用)
 
     state フィルタ (bucket ベース) は呼び出し側で ``_apply_status_filter`` を使って
     Python 側でかける (有効期限の比較が今日依存のため SQL より素直)。
     """
-    where = ["c.status = 'confirmed'"]
+    if include_archived:
+        where = ["c.status IN ('confirmed','archived')"]
+    else:
+        where = ["c.status = 'confirmed'"]
     params: list = []
 
     q_clean = (q or "").strip()
@@ -312,23 +317,30 @@ async def index(
     q: str = "",
     status: str = "",
     category: str = "",
+    include_archived: int = 0,
     user: dict = Depends(get_current_user),
 ):
     """確定済み一覧 + 期限サマリ。general (ログイン済み) に開放。
 
     クエリパラメータ:
-      - ``q``        : キーワード (氏名 / 資格名 / 交付番号 のいずれかに部分一致)
-      - ``status``   : safe / warning / expired / no_renewal / all
-      - ``category`` : q_qualifications.category の完全一致
+      - ``q``                : キーワード (氏名 / 資格名 / 交付番号 のいずれかに部分一致)
+      - ``status``           : safe / warning / expired / no_renewal / all
+      - ``category``         : q_qualifications.category の完全一致
+      - ``include_archived`` : 1 で archived 行も結果に含める (デフォルト 0)
 
     サマリカードは**フィルタを通さない全件**で集計する (ユーザーの俯瞰用)。
+    archived はサマリには含めない (=「現役の資格証」を俯瞰するための数字)。
     """
+    include_archived_b = bool(include_archived)
+
     db = await get_db()
     try:
         # 全件取得 (サマリ用、無条件)
         all_certs = await _fetch_confirmed(db)
         # フィルタ適用 (テーブル表示用)
-        filtered = await _fetch_confirmed(db, q=q, category=category)
+        filtered = await _fetch_confirmed(
+            db, q=q, category=category, include_archived=include_archived_b,
+        )
         filtered = _apply_status_filter(filtered, status)
         categories = await _fetch_categories(db)
         pending_count = await _count_active_jobs(db)
@@ -339,8 +351,12 @@ async def index(
         "q": q.strip(),
         "status": status.strip(),
         "category": category.strip(),
+        "include_archived": include_archived_b,
     }
-    is_filtered = bool(filters["q"] or filters["status"] or filters["category"])
+    is_filtered = bool(
+        filters["q"] or filters["status"] or filters["category"]
+        or filters["include_archived"]
+    )
 
     return _templates.TemplateResponse(
         request,
@@ -1259,3 +1275,60 @@ async def delete_certificate(
         await db.close()
 
     return RedirectResponse(url="/qualifications/", status_code=303)
+
+
+# ────────────────────────────────────────────
+# 復元 (Phase 3.x) — archived → confirmed
+# ────────────────────────────────────────────
+
+@router.post("/{cert_id}/restore")
+async def restore_certificate(
+    cert_id: int,
+    user: dict = Depends(require_admin),
+):
+    """archived された資格者証を ``status='confirmed'`` に戻す。admin のみ。
+
+    delete (アーカイブ) と異なり、こちらは**冪等にしない**。すでに confirmed の
+    ものを誤って再復元しないよう、明示的に 400 を返す。
+      - 存在しない cert_id → 404
+      - 状態が archived 以外  → 400
+    成功時は ``?include_archived=1`` 付きで一覧へ戻し、操作直後の状態が
+    画面で確認できるようにする。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT status FROM q_certificates WHERE cert_id = ?", (cert_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="資格者証が見つかりません")
+        if row["status"] != "archived":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"この資格者証はアーカイブされていません "
+                    f"(現在の状態: {row['status']})"
+                ),
+            )
+        await db.execute(
+            """
+            UPDATE q_certificates
+               SET status     = 'confirmed',
+                   updated_at = datetime('now','localtime')
+             WHERE cert_id = ?
+            """,
+            (cert_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    logger.info(
+        "qualifications certificate 復元: cert_id=%d user=%s",
+        cert_id, user.get("username"),
+    )
+    # 復元直後のレコードがそのまま見えるよう archived ビューに留める
+    return RedirectResponse(
+        url="/qualifications/?include_archived=1", status_code=303,
+    )

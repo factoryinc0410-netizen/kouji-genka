@@ -18,10 +18,12 @@
 <div class="mt-4"></div>
 
 {# ── 期限サマリ (4 stat-cards) — クリックでフィルタ適用 ─────────── #}
-{# サマリは常に **全件** ベースなので、ユーザーは絞り込み中でも俯瞰できる。 #}
+{# サマリは常に **全件** ベースなので、ユーザーは絞り込み中でも俯瞰できる。
+   include_archived 状態を保持するため、各カードの href に引き継ぐ。 #}
+{% set arch_q = '&include_archived=1' if filters.include_archived else '' %}
 <div class="row g-3 mb-3">
     <div class="col-6 col-md-3">
-        <a href="/qualifications/" class="text-decoration-none">
+        <a href="/qualifications/{% if filters.include_archived %}?include_archived=1{% endif %}" class="text-decoration-none">
             <div class="card shadow-sm h-100 border-secondary border-opacity-25
                         {% if not is_filtered %}border-2{% endif %}">
                 <div class="card-body py-3">
@@ -34,7 +36,7 @@
         </a>
     </div>
     <div class="col-6 col-md-3">
-        <a href="/qualifications/?status=safe" class="text-decoration-none">
+        <a href="/qualifications/?status=safe{{ arch_q }}" class="text-decoration-none">
             <div class="card shadow-sm h-100 border-success border-opacity-50
                         {% if filters.status == 'safe' %}border-2{% endif %}">
                 <div class="card-body py-3">
@@ -47,7 +49,7 @@
         </a>
     </div>
     <div class="col-6 col-md-3">
-        <a href="/qualifications/?status=warning" class="text-decoration-none">
+        <a href="/qualifications/?status=warning{{ arch_q }}" class="text-decoration-none">
             <div class="card shadow-sm h-100 border-warning border-opacity-50
                         {% if filters.status == 'warning' %}border-2{% endif %}">
                 <div class="card-body py-3">
@@ -60,7 +62,7 @@
         </a>
     </div>
     <div class="col-6 col-md-3">
-        <a href="/qualifications/?status=expired" class="text-decoration-none">
+        <a href="/qualifications/?status=expired{{ arch_q }}" class="text-decoration-none">
             <div class="card shadow-sm h-100 border-danger border-opacity-50
                         {% if filters.status == 'expired' %}border-2{% endif %}">
                 <div class="card-body py-3">
@@ -116,6 +118,20 @@
                 </a>
                 {% endif %}
             </div>
+            {# アーカイブ表示トグル: form 全体の中に置くことで他フィルタとの併用が自然になる #}
+            <div class="col-12 mt-1">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="include-archived-switch"
+                           name="include_archived" value="1"
+                           {% if filters.include_archived %}checked{% endif %}
+                           onchange="document.getElementById('filter-form').submit();">
+                    <label class="form-check-label small text-muted" for="include-archived-switch">
+                        <i class="bi bi-archive me-1"></i>アーカイブ済みも含める
+                        <span class="text-muted">(削除した資格者証を一時的に表示し、復元できます)</span>
+                    </label>
+                </div>
+            </div>
         </form>
     </div>
 </div>
@@ -165,8 +181,15 @@
                 </thead>
                 <tbody>
                     {% for c in certificates %}
-                    <tr>
-                        <td class="fw-bold">{{ c.worker_name }}</td>
+                    <tr class="{% if c.status == 'archived' %}table-secondary text-muted{% endif %}">
+                        <td class="fw-bold">
+                            {{ c.worker_name }}
+                            {% if c.status == 'archived' %}
+                            <span class="badge bg-secondary ms-1" title="アーカイブ済み (削除済み)">
+                                <i class="bi bi-archive me-1"></i>アーカイブ
+                            </span>
+                            {% endif %}
+                        </td>
                         <td class="small text-muted">{{ c.group_name or '-' }}</td>
                         <td>
                             {{ c.qual_name }}
@@ -194,6 +217,17 @@
                         </td>
                         {% if user.is_admin %}
                         <td class="text-center">
+                            {% if c.status == 'archived' %}
+                            {# archived 行: 復元ボタンのみ。編集/削除は見せない。 #}
+                            <form method="post"
+                                  action="/qualifications/{{ c.cert_id }}/restore"
+                                  class="d-inline"
+                                  onsubmit="return confirm('「{{ c.worker_name }} / {{ c.qual_name }}」を復元します。よろしいですか？');">
+                                <button type="submit" class="btn btn-sm btn-outline-success" title="復元">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>復元
+                                </button>
+                            </form>
+                            {% else %}
                             <a href="/qualifications/edit/{{ c.cert_id }}"
                                class="btn btn-sm btn-outline-primary"
                                title="編集">
@@ -207,6 +241,7 @@
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </form>
+                            {% endif %}
                         </td>
                         {% endif %}
                     </tr>
