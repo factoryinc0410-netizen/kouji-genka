@@ -1,0 +1,100 @@
+# ================================================================
+#  Factoryskills - systemd unit (Nginx リバースプロキシ前提)
+#  配置先: /etc/systemd/system/factoryskills.service
+#
+#  位置づけ:
+#    - 本ファイルは **Nginx を前段に置く構成** 用のテンプレート。
+#      uvicorn は 127.0.0.1:8001 にバインドし、外部からは Nginx 経由でのみ
+#      到達できるようにする。
+#    - 直接 0.0.0.0:8000 で公開する旧式構成は deploy_linux/factoryskills.service
+#      を参照 (そちらは /opt/factoryskills 配下を想定)。
+#
+#  前提:
+#    - アプリ配置先 : /home/ubuntu/dev-app   (環境に合わせて書き換える)
+#    - 実行ユーザー : ubuntu
+#    - venv         : /home/ubuntu/dev-app/.venv
+#    - .env         : /home/ubuntu/dev-app/.env
+#    - 前段 Nginx  : deploy/nginx/factoryskills.conf
+#
+#  インストール:
+#    sudo cp deploy/systemd/factoryskills.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable factoryskills
+#    sudo systemctl start factoryskills
+#
+#  状態確認:
+#    sudo systemctl status factoryskills
+#    sudo journalctl -u factoryskills -f
+#    curl http://127.0.0.1:8001/health
+#
+#  注意:
+#    --workers は必ず 1 を維持すること。
+#    ジョブキュー (web_app/services/worker.py) はプロセス内 queue.Queue で
+#    実装されており、複数プロセスにすると DB 排他とジョブ重複の問題が発生する。
+# ================================================================
+
+[Unit]
+Description=Factoryskills - Business automation web platform (FastAPI/Uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ── 実行ユーザー / 作業ディレクトリ ──
+# 環境に合わせて User / WorkingDirectory を書き換える。
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dev-app
+
+# ── 環境変数 ──
+# .env を EnvironmentFile で読み込む (アプリ側 dotenv ロードと二重になるが冪等)
+EnvironmentFile=/home/ubuntu/dev-app/.env
+Environment="PYTHONIOENCODING=utf-8"
+Environment="PYTHONUNBUFFERED=1"
+
+# ── 起動コマンド ──
+# Nginx 前提なのでローカルループバックの 8001 にバインドする。
+# 外部からの直アクセスは Nginx (port 80/443) 経由のみ。
+ExecStart=/home/ubuntu/dev-app/.venv/bin/uvicorn web_app.main:app \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --workers 1 \
+    --log-level info \
+    --no-access-log
+
+# ── 停止 ──
+# 終了時は SIGTERM → 30 秒待機 → SIGKILL
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# ── 自動再起動 ──
+Restart=on-failure
+RestartSec=5s
+
+# ── ログ (stdout/stderr は journald 経由) ──
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=factoryskills
+
+# ── セキュリティ強化 (任意・推奨) ──
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# WorkingDirectory 配下に書き込みたいディレクトリを明示する場合は ReadWritePaths
+# を有効化する (ProtectSystem=full では /home は書込可なので通常は不要)。
+# ReadWritePaths=/home/ubuntu/dev-app/web_app/data /home/ubuntu/dev-app/web_app/uploads /home/ubuntu/dev-app/web_app/outputs
+
+# ── リソース制限 (任意) ──
+# Playwright Chromium はメモリを使うため、最低 1GB を確保したい。
+# MemoryMax=2G
+# CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
