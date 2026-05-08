@@ -147,12 +147,18 @@
             {% endif %}
         </span>
         <div class="d-flex gap-2">
-            {# CSV ダウンロード: 現在のフィルタ条件をクエリパラメータに引き継ぐ #}
+            {# CSV / PDF ダウンロード: 現在のフィルタ条件をクエリパラメータに引き継ぐ #}
             {% if total_count > 0 %}
+            {% set arch_qs = '&include_archived=1' if filters.include_archived else '' %}
             <a href="/qualifications/export?q={{ filters.q | urlencode }}&status={{ filters.status | urlencode }}&category={{ filters.category | urlencode }}"
                class="btn btn-sm btn-outline-secondary"
                title="表示中の絞り込み条件で CSV ダウンロード">
-                <i class="bi bi-download me-1"></i>CSV
+                <i class="bi bi-filetype-csv me-1"></i>CSV
+            </a>
+            <a href="/qualifications/export/pdf?q={{ filters.q | urlencode }}&status={{ filters.status | urlencode }}&category={{ filters.category | urlencode }}{{ arch_qs }}"
+               class="btn btn-sm btn-outline-secondary"
+               title="表示中の絞り込み条件で印刷用 PDF をダウンロード">
+                <i class="bi bi-filetype-pdf me-1"></i>PDF
             </a>
             {% endif %}
             {% if user.is_admin %}

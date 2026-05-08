@@ -452,6 +452,137 @@ async def export_csv(
     )
 
 
+# ────────────────────────────────────────────
+# PDF エクスポート (Phase 3.3) — 印刷向け一覧
+# ────────────────────────────────────────────
+
+# CSS は CDN ではなくテンプレ側で最小スタイルを記述する。
+# Playwright は networkidle まで待つので、外部 CSS を引いても OK だが
+# オフライン環境でも動かしやすいよう自前 CSS で最小限にとどめる。
+
+async def _html_to_pdf(html: str) -> bytes:
+    """HTML 文字列を A4 landscape PDF バイト列に変換する (Playwright)。
+
+    既存の skills/order_docs/html_pdf_builder.py と同じ手順
+    (set_content → emulate_media('print') → page.pdf) を踏襲した薄いラッパ。
+    PDF オプションは @page CSS でテンプレ側から制御できるよう
+    prefer_css_page_size=True を有効化する。
+    """
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.set_content(html, wait_until="networkidle")
+            await page.emulate_media(media="print")
+            return await page.pdf(
+                format="A4",
+                landscape=True,
+                print_background=True,
+                prefer_css_page_size=True,
+                margin={"top": "10mm", "bottom": "10mm",
+                        "left": "10mm", "right": "10mm"},
+            )
+        finally:
+            await browser.close()
+
+
+# 状態フィルタ key → 日本語ラベル (PDF タイトル下のサマリ表示用)。
+_STATUS_LABELS_JA: dict[str, str] = {
+    "safe":       "有効 (>180日)",
+    "warning":    "期限近接 (180日以内)",
+    "expired":    "期限切れ",
+    "no_renewal": "更新不要",
+}
+
+
+def _build_filter_label(filters: dict) -> str:
+    """印刷ヘッダ向けに、現在のフィルタ条件を 1 行で日本語化する。"""
+    parts: list[str] = []
+    if filters.get("q"):
+        parts.append(f"キーワード「{filters['q']}」")
+    if filters.get("status"):
+        parts.append(_STATUS_LABELS_JA.get(filters["status"], filters["status"]))
+    if filters.get("category"):
+        parts.append(f"カテゴリ「{filters['category']}」")
+    if filters.get("include_archived"):
+        parts.append("アーカイブ含む")
+    return " / ".join(parts) if parts else "全件"
+
+
+@router.get("/export/pdf")
+async def export_pdf(
+    request: Request,
+    q: str = "",
+    status: str = "",
+    category: str = "",
+    include_archived: int = 0,
+    preview: int = 0,
+    user: dict = Depends(get_current_user),
+):
+    """印刷向け一覧の PDF / HTML プレビュー。
+
+    クエリ:
+      - 一覧画面と同じ ``q`` / ``status`` / ``category`` / ``include_archived``
+      - ``preview=1`` で HTML をそのまま返す (PDF 化スキップ — ブラウザで確認用)
+
+    PDF はメモリ上で生成し ``StreamingResponse`` で返却する。Content-Disposition は
+    ``attachment`` で明示的にダウンロードを促す。プレビュー時は HTML として返し、
+    ブラウザのプリント機能と組み合わせて使えるようにする。
+    """
+    include_archived_b = bool(include_archived)
+    db = await get_db()
+    try:
+        rows = await _fetch_confirmed(
+            db, q=q, category=category, include_archived=include_archived_b,
+        )
+        rows = _apply_status_filter(rows, status)
+    finally:
+        await db.close()
+
+    filters = {
+        "q": q.strip(),
+        "status": status.strip(),
+        "category": category.strip(),
+        "include_archived": include_archived_b,
+    }
+    context = {
+        "request": request,
+        "user": user,
+        "certificates": rows,
+        "summary": _summarize(rows),
+        "total_count": len(rows),
+        "filters": filters,
+        "filter_label": _build_filter_label(filters),
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+    # HTML プレビュー: TemplateResponse で Content-Type=text/html
+    if preview:
+        return _templates.TemplateResponse(
+            request, "qualifications/print.html", context,
+        )
+
+    # PDF 生成: 同じテンプレートを文字列として描画
+    html = _templates.env.get_template("qualifications/print.html").render(**context)
+    pdf_bytes = await _html_to_pdf(html)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"qualifications_{timestamp}.pdf"
+    logger.info(
+        "qualifications PDF エクスポート: rows=%d filters=%s user=%s",
+        len(rows), filters, user.get("username"),
+    )
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 @router.get("/pending", response_class=HTMLResponse)
 async def pending(request: Request, user: dict = Depends(get_current_user)):
     """未確定一覧 — q_upload_jobs ベース。
