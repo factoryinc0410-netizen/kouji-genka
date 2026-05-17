@@ -49,8 +49,8 @@
     </nav>
     <h3><i class="bi bi-hourglass-split me-2 text-warning"></i>未確定一覧</h3>
     <p class="text-muted mb-0">
-        OCR 後、内容確認・確定がまだ済んでいないアップロードジョブの一覧です。
-        確認・修正フローは Phase 2.5 で実装予定です。
+        AI による読み取りが完了し、内容の確認・確定を待っているアップロードジョブの一覧です。
+        各ジョブの「確認・修正」ボタンから候補を見直し、資格者証として確定できます。
     </p>
 </div>
 
@@ -63,7 +63,7 @@
     <div class="card-body text-center text-muted py-5">
         <i class="bi bi-check2-circle display-6 d-block mb-2 text-success"></i>
         未確定のアップロードジョブはありません。
-        {% if user.is_admin %}
+        {% if has_perm(user, 'qualifications', 'manager') %}
         <div class="mt-3">
             <a href="/qualifications/upload" class="btn btn-primary">
                 <i class="bi bi-cloud-arrow-up me-1"></i>新しい資格者証をアップロード
@@ -75,7 +75,7 @@
 {% else %}
 
 {% for job in jobs %}
-<div class="card shadow-sm mb-3">
+<div class="card shadow-sm mb-3 job-card" data-job-id="{{ job.job_id }}" data-job-short="{{ job.short_id }}">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span>
             <i class="bi bi-collection me-1"></i>
@@ -138,24 +138,24 @@
         {% elif job.status == 'await_review' %}
         <div class="alert alert-warning mb-0">
             <i class="bi bi-exclamation-triangle me-1"></i>
-            OCR は完了しましたが、資格候補を抽出できませんでした。
-            画質や向きを確認のうえ、Phase 2.5 の手動確定機能で対応してください。
+            AI による読み取りは完了しましたが、資格候補を抽出できませんでした。
+            画質や向きを確認のうえ、必要に応じて手動追加から登録してください。
         </div>
 
         {# ── 進行中ステータス ── #}
         {% elif job.status == 'pending' %}
         <p class="text-muted mb-0">
             <i class="bi bi-hourglass-split me-1"></i>
-            ワーカーがジョブを取り出すのを待っています...
+            ワーカーがジョブを取り出すのを待っています…
         </p>
         {% elif job.status == 'ocr' %}
         <p class="text-muted mb-0">
             <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-            Gemini で OCR 処理を実行中です。完了までしばらくお待ちください。
+            AI が資格情報を読み取り中です。完了までしばらくお待ちください。
         </p>
         {% elif job.status == 'classifying' %}
         <p class="text-muted mb-0">
-            <i class="bi bi-diagram-3 me-1"></i>OCR 結果を整理しています...
+            <i class="bi bi-diagram-3 me-1"></i>読み取り結果を整理中…
         </p>
 
         {# ── エラー ── #}
@@ -167,16 +167,133 @@
         {% endif %}
     </div>
 
-    {# ── 確認・修正ボタン: classify.html へ遷移 ── #}
-    {% if user.is_admin and job.status == 'await_review' %}
-    <div class="card-footer text-end">
+    {# ── アクション (確認・確定 / 削除) ──
+       ・await_review : 「確認・確定」+「削除」
+       ・error        : 「削除」のみ
+       削除は JS で DELETE /qualifications/jobs/<id> を叩き、成功したら
+       行を fade-out させて DOM から外す。失敗時はアラートを出す。 #}
+    {% if has_perm(user, 'qualifications', 'manager')
+        and job.status in ('await_review', 'error') %}
+    <div class="card-footer d-flex justify-content-end gap-2 flex-wrap">
+        {% if job.status == 'await_review' %}
         <a href="/qualifications/classify/{{ job.job_id }}" class="btn btn-sm btn-primary">
-            <i class="bi bi-magic me-1"></i>確認・修正
+            <i class="bi bi-magic me-1"></i>確認・確定
         </a>
+        {% endif %}
+        <button type="button"
+                class="btn btn-sm btn-danger js-delete-job"
+                title="このジョブを削除">
+            <i class="bi bi-trash me-1"></i>削除
+        </button>
     </div>
     {% endif %}
 </div>
 {% endfor %}
 
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if has_perm(user, 'qualifications', 'manager') %}
+<script>
+(function () {
+    'use strict';
+
+    // ── CSRF トークンを base.html の meta タグから取得 ──
+    // 認証済みページでは user.csrf_token が埋め込まれている。未認証 / 古い
+    // セッションでは空文字列だが、その場合でもサーバ側の verify_csrf_token は
+    // 不一致として 403 を返すので、UI 側は単純にヘッダーへ載せるだけで良い。
+    function getCsrfToken() {
+        const el = document.querySelector('meta[name="csrf-token"]');
+        return el ? (el.getAttribute('content') || '') : '';
+    }
+
+    // 削除ボタンは複数描画されうるので、document でイベント委譲する。
+    // 動的 DOM 変更 (削除後の row 除去) との相性も良い。
+    document.addEventListener('click', async function (ev) {
+        const btn = ev.target.closest('.js-delete-job');
+        if (!btn) return;
+        ev.preventDefault();
+
+        const card = btn.closest('.job-card');
+        if (!card) return;
+        const jobId    = card.getAttribute('data-job-id') || '';
+        const jobShort = card.getAttribute('data-job-short') || jobId.slice(0, 8);
+        // デバッグ: ブラウザが新しい JS を読み込んでいるかの確認用ログ。
+        // DevTools の Console に出るので、この行が見えなければハードリロード
+        // (Cmd/Ctrl + Shift + R) かキャッシュクリアが必要。
+        console.log("Delete triggered for job: " + jobId);
+        if (!jobId) return;
+
+        // 確認ダイアログ — 解析済みデータも消えることを明示
+        const ok = window.confirm(
+            'このアップロードジョブ (' + jobShort + ') を削除しますか？\n' +
+            '（解析済みのデータも消去されます）'
+        );
+        if (!ok) return;
+
+        // 二重送信防止
+        btn.disabled = true;
+        btn.innerHTML =
+            '<span class="spinner-border spinner-border-sm me-1" role="status"></span>削除中...';
+
+        try {
+            const res = await fetch(
+                '/qualifications/jobs/' + encodeURIComponent(jobId),
+                {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json',
+                        // CSRF: サーバ側がヘッダー検証する場合に通すため常時付与。
+                        // 検証していないエンドポイントでは無視されるだけで害は無い。
+                        'X-CSRF-Token': getCsrfToken(),
+                    },
+                    // セッション Cookie を確実に送る (CORS 環境での安全側設定)
+                    credentials: 'same-origin',
+                }
+            );
+
+            if (res.ok) {
+                // 成功: カードを fade-out して DOM から除去
+                card.style.transition = 'opacity .25s ease';
+                card.style.opacity = '0';
+                setTimeout(function () {
+                    card.remove();
+                    // 残ジョブが 0 件になったら全画面をリロードして
+                    // 「未確定なし」の状態表示に切り替える (テンプレートの空状態を再描画)。
+                    if (document.querySelectorAll('.job-card').length === 0) {
+                        window.location.reload();
+                    }
+                }, 250);
+            } else {
+                // エラー時はサーバーの detail を可能な限り抽出して見せる。
+                // - JSON {"detail": "..."}    → そのまま表示
+                // - HTML レスポンス (403 ページ等) → HTTP コードのみ
+                // - 失敗の根本原因が CSRF / 権限 / 不正状態 のいずれか分かるよう
+                //   コードもあわせて出す。
+                let detail = '';
+                let body = '';
+                try { body = await res.text(); } catch (_) {}
+                try {
+                    const data = body ? JSON.parse(body) : null;
+                    if (data && data.detail) detail = data.detail;
+                } catch (_) { /* JSON でなければそのまま */ }
+                if (!detail) detail = '(詳細なし)';
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-trash me-1"></i>削除';
+                window.alert(
+                    '削除に失敗しました [HTTP ' + res.status + ']\n' + detail
+                );
+                console.warn('delete job failed:', res.status, body);
+            }
+        } catch (err) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-trash me-1"></i>削除';
+            window.alert('通信エラー: サーバーに到達できませんでした。');
+            console.error(err);
+        }
+    });
+})();
+</script>
 {% endif %}
 {% endblock %}

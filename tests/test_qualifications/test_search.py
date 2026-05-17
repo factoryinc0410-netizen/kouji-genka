@@ -77,7 +77,7 @@ def _seed_certificates(db_path: Path) -> None:
 class TestNoFilter:
     def test_returns_all_when_no_query(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/")
+        r = app_env["client"].get("/qualifications/?status=all")
         assert r.status_code == 200
         # 6 件全部が表示される
         for cno in ("第A001号", "第A002号", "第A003号", "第A004号", "第A005号", "第A006号"):
@@ -86,17 +86,21 @@ class TestNoFilter:
         assert "/ 6 件" not in r.text
 
     def test_summary_shows_full_count(self, app_env):
+        """資格証一覧タブのヘッダに全件数 (=6) が表示される。
+
+        Phase 1-5 改修後、トップの 4 サマリカードは廃止され、件数表示は
+        cert タブヘッダ内の badge に統合された (フィルタ無し時は ``{{ total_count }} 件``)。
+        """
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/")
-        # サマリ: total=6, safe=2, warning=2, expired=1, no_renewal=1
-        # ざっくり数値を含む小ブロックがあれば OK
-        assert ">6<" in r.text  # total
+        r = app_env["client"].get("/qualifications/?status=all")
+        # cert タブヘッダの「6 件」badge
+        assert ">6 件<" in r.text
 
 
 class TestKeywordFilter:
     def test_match_worker_name(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=山田")
+        r = app_env["client"].get("/qualifications/?status=all&q=山田")
         assert r.status_code == 200
         # 山田の 2 件のみ
         assert "第A001号" in r.text
@@ -107,7 +111,7 @@ class TestKeywordFilter:
 
     def test_match_qualification_name(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=玉掛け")
+        r = app_env["client"].get("/qualifications/?status=all&q=玉掛け")
         assert r.status_code == 200
         # 玉掛けの 2 件 (山田 + 佐藤)
         assert "第A001号" in r.text
@@ -118,14 +122,14 @@ class TestKeywordFilter:
 
     def test_match_certificate_no(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=A005")
+        r = app_env["client"].get("/qualifications/?status=all&q=A005")
         assert r.status_code == 200
         assert "第A005号" in r.text
         assert "第A001号" not in r.text
 
     def test_no_match(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=存在しない名前")
+        r = app_env["client"].get("/qualifications/?status=all&q=存在しない名前")
         assert r.status_code == 200
         assert "該当する資格者証がありません" in r.text
 
@@ -170,7 +174,7 @@ class TestStatusFilter:
 class TestCategoryFilter:
     def test_filters_by_category(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?category=技能講習")
+        r = app_env["client"].get("/qualifications/?status=all&category=技能講習")
         # 技能講習 = 玉掛け 2件 + フォーク 1件 = 3件
         assert "第A001号" in r.text
         assert "第A002号" in r.text
@@ -183,14 +187,14 @@ class TestCategoryFilter:
 class TestCombinedFilters:
     def test_keyword_and_status(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=山田&status=warning")
+        r = app_env["client"].get("/qualifications/?status=all&q=山田&status=warning")
         # 山田 × warning = フォーク 1件
         assert "第A002号" in r.text
         assert "第A001号" not in r.text  # safe
 
     def test_category_and_status(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?category=技能講習&status=expired")
+        r = app_env["client"].get("/qualifications/?status=all&category=技能講習&status=expired")
         # 技能講習 × expired = 佐藤/玉掛け
         assert "第A003号" in r.text
         assert "第A001号" not in r.text
@@ -200,12 +204,15 @@ class TestSummaryStability:
     """サマリ集計はフィルタの影響を受けず、常に全件で計算される。"""
 
     def test_summary_shows_full_count_when_filtered(self, app_env):
+        """フィルタ時は cert タブヘッダに ``filtered_count / total_count 件`` が並ぶ。
+
+        Phase 1-5 改修後はサマリカード廃止。total_count はヘッダ badge に統合
+        (例: フィルタで 2 件にヒットしても、全件数 6 は ``2 / 6 件`` として残る)。
+        """
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=山田")
-        # 表示される件数は 2 だが、サマリ total は 6 のまま
+        r = app_env["client"].get("/qualifications/?status=all&q=山田")
+        # ヘッダ badge: "2 / 6 件" 形式
         assert "2 / 6 件" in r.text
-        # サマリカード内に 6 が出ている
-        assert ">6<" in r.text
 
 
 class TestFilterFormState:
@@ -213,7 +220,7 @@ class TestFilterFormState:
 
     def test_keyword_value_preserved(self, app_env):
         _seed_certificates(app_env["db_path"])
-        r = app_env["client"].get("/qualifications/?q=test_kw")
+        r = app_env["client"].get("/qualifications/?status=all&q=test_kw")
         assert 'value="test_kw"' in r.text
 
     def test_status_select_preserved(self, app_env):

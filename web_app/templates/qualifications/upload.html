@@ -15,7 +15,8 @@
         PDF / JPEG / PNG をドラッグ&amp;ドロップで投入します。最大
         <strong>{{ max_files }}</strong> 枚 / 1 枚あたり
         <strong>{{ max_file_mb }} MB</strong> まで。
-        OCR (gemini-2.5-flash) は Phase 2 で接続予定。
+        画像はブラウザ側で自動圧縮 (最大 1920px / JPEG 品質 0.8) してから送信します。
+        アップロード後、AI が自動で資格情報を読み取ります。
     </p>
 </div>
 
@@ -83,6 +84,30 @@
     <div class="card-body" id="result-body"></div>
 </div>
 
+{# ════════════════════════════════════════════════════════════════
+   読み取り中インライン UI (アップロード成功 → AI 読み取り完了の間に表示)
+   - フォーム部分を覆い隠してスピナーとステータスを出す
+   - JavaScript が status API をポーリングし、await_review になったら
+     /qualifications/classify/<job_id> へ遷移する
+   ──────────────────────────────────────────────────────────────── #}
+<div id="analyzing-section" class="card shadow-sm d-none">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-magic me-1"></i>AI が読み取り中
+    </div>
+    <div class="card-body text-center py-5">
+        <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">読み取り中…</span>
+        </div>
+        <h5 class="mb-2">読み取り中…</h5>
+        <p class="text-muted mb-1" id="analyzing-status-msg">
+            AI が資格情報を読み取り中です。完了次第、確認画面へ自動で移動します。
+        </p>
+        <p class="text-muted small mb-0">
+            ジョブ ID: <code id="analyzing-job-id">-</code>
+        </p>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -101,12 +126,16 @@
     const clearBtn     = document.getElementById('clear-btn');
     const uploadBtn    = document.getElementById('upload-btn');
     const form         = document.getElementById('upload-form');
+    const formCard     = form.closest('.card');
     const alertArea    = document.getElementById('alert-area');
     const progressBar  = document.getElementById('progress-bar');
     const progressSec  = document.getElementById('progress-section');
     const progressMsg  = document.getElementById('progress-status');
     const resultSec    = document.getElementById('result-section');
     const resultBody   = document.getElementById('result-body');
+    const analyzingSec = document.getElementById('analyzing-section');
+    const analyzingMsg = document.getElementById('analyzing-status-msg');
+    const analyzingJobId = document.getElementById('analyzing-job-id');
 
     /** 選択中のファイル一覧（File オブジェクトを保持） */
     let staged = [];
@@ -252,8 +281,78 @@
         staged = []; renderFiles(); clearAlert();
     });
 
+    // ── クライアント側リサイズ (画像のみ) ──
+    // PDF はそのまま送る。画像は最大長 1920px / JPEG 品質 0.8 に圧縮することで
+    // 5〜20MB のスマホ写真を 1〜2MB に縮められ、通信時間と OCR 処理時間を短縮。
+    // 1MB 未満の小さい画像はリサイズしない (再エンコードのオーバーヘッドを避ける)。
+    const RESIZE_MAX_DIM   = 1920;
+    const RESIZE_QUALITY   = 0.8;
+    const RESIZE_THRESHOLD = 1 * 1024 * 1024;  // 1 MB
+
+    function isImageFile(file) {
+        if (file.type && file.type.startsWith('image/')) return true;
+        return /\.(jpe?g|png|webp|gif)$/i.test(file.name || '');
+    }
+
+    /**
+     * 画像 File を Canvas で最大長 RESIZE_MAX_DIM・JPEG quality RESIZE_QUALITY に
+     * 圧縮した新しい File を返す。リサイズ不要なら元 File を返す。失敗時も元
+     * File にフォールバック (画像が壊れていても upload は試行できる)。
+     */
+    async function resizeImageIfNeeded(file) {
+        if (!isImageFile(file))            return file;
+        if (file.size < RESIZE_THRESHOLD)  return file;
+
+        const url = URL.createObjectURL(file);
+        try {
+            const img = await new Promise(function (res, rej) {
+                const im = new Image();
+                im.onload  = function () { res(im); };
+                im.onerror = function () { rej(new Error('画像読み込み失敗: ' + file.name)); };
+                im.src = url;
+            });
+
+            const scale = Math.min(
+                RESIZE_MAX_DIM / img.naturalWidth,
+                RESIZE_MAX_DIM / img.naturalHeight,
+                1   // 元画像が小さい場合は拡大しない
+            );
+            const w = Math.round(img.naturalWidth  * scale);
+            const h = Math.round(img.naturalHeight * scale);
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            // 描画前に白背景で塗る (透過 PNG → JPEG 変換で透明部が黒になるのを防ぐ)
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+
+            const blob = await new Promise(function (res) {
+                canvas.toBlob(res, 'image/jpeg', RESIZE_QUALITY);
+            });
+            if (!blob) return file;
+
+            // 拡張子を .jpg に統一 (内容と整合させる) — 元 .png でも内容は JPEG
+            const newName = (file.name || 'image').replace(
+                /\.(png|jpe?g|webp|gif)$/i, '.jpg'
+            );
+            return new File([blob], newName, {
+                type: 'image/jpeg',
+                lastModified: Date.now(),
+            });
+        } catch (err) {
+            // リサイズ不能なら元ファイルで送信を試みる (サーバ側で MAX_FILE_MB を弾く)
+            console.warn('画像リサイズ失敗 — 元ファイルで送信:', file.name, err);
+            return file;
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
     // ── 送信 ──
-    form.addEventListener('submit', function (e) {
+    form.addEventListener('submit', async function (e) {
         e.preventDefault();
         if (staged.length === 0) return;
 
@@ -262,17 +361,36 @@
         progressSec.classList.remove('d-none');
         uploadBtn.disabled = true;
 
+        // ── 画像のみリサイズ → 新 File に差し替え ──
+        progressBar.classList.add('progress-bar-animated');
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+        progressMsg.textContent = '画像を圧縮中...';
+        const processed = [];
+        for (let i = 0; i < staged.length; i++) {
+            const original = staged[i];
+            const optimized = await resizeImageIfNeeded(original);
+            processed.push(optimized);
+            // 圧縮ステップ全体を 0-30% に振り分け、本体の upload は 30-100%
+            const pct = Math.round(((i + 1) / staged.length) * 30);
+            progressBar.style.width = pct + '%';
+            progressBar.textContent = pct + '%';
+        }
+
         const fd = new FormData();
-        staged.forEach(function (f) { fd.append('files', f, f.name); });
+        processed.forEach(function (f) { fd.append('files', f, f.name); });
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/qualifications/upload', true);
 
+        progressMsg.textContent = 'アップロード中...';
         xhr.upload.addEventListener('progress', function (ev) {
             if (!ev.lengthComputable) return;
-            const pct = Math.round((ev.loaded / ev.total) * 100);
-            progressBar.style.width = pct + '%';
-            progressBar.textContent = pct + '%';
+            // 圧縮ステップで 30% 進めているので、upload を 30→100% に振り分ける
+            const uploadPct = (ev.loaded / ev.total) * 70;
+            const totalPct = Math.round(30 + uploadPct);
+            progressBar.style.width = totalPct + '%';
+            progressBar.textContent = totalPct + '%';
         });
 
         xhr.addEventListener('load', function () {
@@ -283,27 +401,20 @@
             if (xhr.status >= 200 && xhr.status < 300 && payload && payload.ok) {
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100%';
-                progressMsg.textContent = '完了';
                 progressBar.classList.remove('progress-bar-animated');
-
-                resultBody.innerHTML =
-                    '<dl class="row mb-0">' +
-                    '<dt class="col-sm-3">ジョブ ID</dt>' +
-                    '<dd class="col-sm-9 text-monospace"><code>' + payload.job_id + '</code></dd>' +
-                    '<dt class="col-sm-3">ファイル数</dt>' +
-                    '<dd class="col-sm-9">' + payload.file_count + ' 件</dd>' +
-                    '<dt class="col-sm-3">ステータス</dt>' +
-                    '<dd class="col-sm-9"><span class="badge bg-secondary">' +
-                      payload.status + '</span> (Phase 2 で OCR / 分類処理に進みます)</dd>' +
-                    '<dt class="col-sm-3">保存ファイル</dt>' +
-                    '<dd class="col-sm-9 small text-muted">' +
-                      payload.saved_files.map(function (n) {
-                          return '<div><i class="bi bi-file-earmark me-1"></i>' + n + '</div>';
-                      }).join('') +
-                    '</dd>' +
-                    '</dl>';
-                resultSec.classList.remove('d-none');
+                progressMsg.textContent = 'アップロード完了 — AI 読み取りを開始します…';
                 staged = []; renderFiles();
+
+                // ── 入力フォームと進捗バーを隠し、読み取り中インライン UI を表示 ──
+                // /pending への画面遷移は廃止: アップロードタブを維持したまま
+                // 同じ画面内で AI 読み取り完了をポーリングし、完了したら直接 classify へ。
+                formCard.classList.add('d-none');
+                progressSec.classList.add('d-none');
+                resultSec.classList.add('d-none');
+                analyzingJobId.textContent = payload.job_id;
+                analyzingSec.classList.remove('d-none');
+
+                pollJobStatus(payload.job_id);
             } else {
                 progressSec.classList.add('d-none');
                 const msg = (payload && payload.error) ? payload.error :
@@ -320,13 +431,92 @@
                 '<i class="bi bi-wifi-off me-1"></i>通信エラー: サーバーに到達できませんでした。');
         });
 
-        // 進捗初期化
-        progressBar.classList.add('progress-bar-animated');
-        progressBar.style.width = '0%';
-        progressBar.textContent = '0%';
-        progressMsg.textContent = 'アップロード中...';
+        // 圧縮ステップで既に 0-30% を進めているので、ここでは初期化せず送信のみ。
+        // (進捗バーアニメーションは圧縮開始時から有効)
         xhr.send(fd);
     });
+
+    // ── AI 読み取り完了ポーリング ─────────────────────────────────
+    // 約 3 秒間隔で /qualifications/jobs/<id>/status を叩き、
+    //   - status=await_review → next_url (= classify 画面) へ遷移
+    //   - status=error        → エラーメッセージを表示してフォームを再表示
+    //   - それ以外            → ステータスを表示し続けて待機
+    // 上限時間 (POLL_TIMEOUT_MS) を超えたら諦めて pending 画面へ誘導する。
+    const POLL_INTERVAL_MS = 3000;
+    const POLL_TIMEOUT_MS  = 5 * 60 * 1000;   // 5 分
+
+    const STATUS_LABELS = {
+        'pending':     'ワーカーを待機中…',
+        'ocr':         'AI が読み取り中…',
+        'classifying': '読み取り結果を整理中…',
+        'await_review':'読み取り完了 — 確認画面へ移動します',
+        'error':       'エラーが発生しました',
+        'done':        '確定済み',
+    };
+
+    function pollJobStatus(jobId) {
+        const startedAt = Date.now();
+        let timer = null;
+
+        function stop() {
+            if (timer !== null) {
+                clearInterval(timer);
+                timer = null;
+            }
+        }
+
+        async function tick() {
+            if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+                stop();
+                analyzingMsg.innerHTML =
+                    '読み取りが予想より時間がかかっています。' +
+                    '<a href="/qualifications/pending">未確定一覧</a> から状況をご確認ください。';
+                return;
+            }
+            try {
+                const res = await fetch(
+                    '/qualifications/jobs/' + encodeURIComponent(jobId) + '/status',
+                    { headers: { 'Accept': 'application/json' } }
+                );
+                if (!res.ok) {
+                    // 404 等: ジョブが消えた可能性 — pending へ誘導
+                    if (res.status === 404) {
+                        stop();
+                        showFatalError('ジョブが見つかりませんでした (削除済みの可能性があります)。');
+                    }
+                    return;
+                }
+                const data = await res.json();
+                const label = STATUS_LABELS[data.status] || ('状態: ' + data.status);
+                analyzingMsg.textContent = label;
+
+                if (data.status === 'await_review' && data.next_url) {
+                    stop();
+                    window.location.href = data.next_url;
+                } else if (data.status === 'error') {
+                    stop();
+                    showFatalError(
+                        data.error_message || '読み取り中にエラーが発生しました。'
+                    );
+                }
+            } catch (err) {
+                // ネットワーク一時障害は無視して次回 tick で再試行
+                console.warn('status poll failed (will retry):', err);
+            }
+        }
+
+        // 即時 1 回 + 3 秒間隔で再ポーリング
+        tick();
+        timer = setInterval(tick, POLL_INTERVAL_MS);
+    }
+
+    function showFatalError(msg) {
+        analyzingSec.classList.add('d-none');
+        formCard.classList.remove('d-none');
+        progressSec.classList.add('d-none');
+        showAlert('danger',
+            '<i class="bi bi-exclamation-triangle me-1"></i>' + msg);
+    }
 })();
 </script>
 {% endblock %}

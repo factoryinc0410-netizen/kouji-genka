@@ -40,21 +40,34 @@
                         <label class="form-label">
                             作業員 <span class="text-danger">*</span>
                         </label>
-                        <select name="worker_id" class="form-select" required>
-                            <option value="">— 作業員を選択 —</option>
-                            {% set group = namespace(current=None) %}
-                            {% for w in workers %}
-                              {% if w.group_name != group.current %}
-                                {% if not loop.first %}</optgroup>{% endif %}
-                                <optgroup label="{{ w.group_name or '(所属なし)' }}">
-                                {% set group.current = w.group_name %}
-                              {% endif %}
-                              <option value="{{ w.worker_id }}">
-                                  {{ w.worker_name }}
-                              </option>
-                            {% endfor %}
-                            {% if workers %}</optgroup>{% endif %}
-                        </select>
+                        <div class="input-group">
+                            <select name="worker_id" class="form-select" required>
+                                <option value="">— 作業員を選択 —</option>
+                                {% set group = namespace(current=None) %}
+                                {% for w in workers %}
+                                  {% if w.group_name != group.current %}
+                                    {% if not loop.first %}</optgroup>{% endif %}
+                                    <optgroup label="{{ w.group_name or '(所属なし)' }}">
+                                    {% set group.current = w.group_name %}
+                                  {% endif %}
+                                  <option value="{{ w.worker_id }}">
+                                      {{ w.worker_name }}
+                                  </option>
+                                {% endfor %}
+                                {% if workers %}</optgroup>{% endif %}
+                            </select>
+                            {# クイック新規登録: 別タブで開いてマスタへ。戻ってからリロードで新スタッフが反映される。 #}
+                            <a href="/qualifications/staff"
+                               target="_blank" rel="noopener"
+                               class="btn btn-outline-success"
+                               title="新しい資格者を登録 (別タブで開きます)">
+                                <i class="bi bi-person-plus me-1"></i>新規登録
+                            </a>
+                        </div>
+                        <div class="form-text small">
+                            一覧にいない人は「新規登録」から追加してください。
+                            登録後、この画面をリロードすると選択肢に表示されます。
+                        </div>
                     </div>
 
                     {# 資格名 (datalist で既存マスタから選択 + 新規入力可) #}

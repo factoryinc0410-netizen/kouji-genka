@@ -59,7 +59,7 @@
                         <th>グループ名</th>
                         <th class="text-center">表示順</th>
                         <th class="text-center">ステータス</th>
-                        <th class="text-center" style="width:120px;">操作</th>
+                        <th class="text-center" style="width:140px;">操作</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -75,11 +75,22 @@
                             {% endif %}
                         </td>
                         <td class="text-center">
-                            <button class="btn btn-outline-primary btn-sm"
-                                    data-bs-toggle="modal"
-                                    data-bs-target="#editModal{{ g.group_id }}">
-                                <i class="bi bi-pencil"></i>
-                            </button>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button class="btn btn-outline-primary"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#editModal{{ g.group_id }}"
+                                        title="編集">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <form method="post"
+                                      action="/construction-cost/groups/{{ g.group_id }}/delete"
+                                      class="d-inline"
+                                      onsubmit="return confirm('「{{ g.group_name }}」を削除します。よろしいですか？\n\n※ このグループを利用している作業員や現場予算がある場合は削除できません。');">
+                                    <button type="submit" class="btn btn-outline-danger" title="削除">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
 

@@ -1,7 +1,8 @@
 {# 資格者証管理 共通タブナビゲーション #}
 {# 使い方: {% set active_tab = "index" %} {% include "qualifications/_nav.html" %} #}
-{# 権限: 管理者専用タブは user.is_admin でガード。一般ユーザーには
-   一覧と未確定のみ表示する（Phase 1 段階）。 #}
+{# 権限: アップロード/手動追加は qualifications.manager、
+   資格マスタは qualifications_master.manager で個別ガード。
+   一般ユーザーには一覧と未確定のみ表示する。 #}
 <ul class="nav nav-tabs">
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'index' %}active{% endif %}"
@@ -18,7 +19,7 @@
             {% endif %}
         </a>
     </li>
-    {% if user.is_admin %}
+    {% if has_perm(user, 'qualifications', 'manager') %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'upload' %}active{% endif %}"
            href="/qualifications/upload">
@@ -31,6 +32,18 @@
             <i class="bi bi-plus-square me-1"></i>手動追加
         </a>
     </li>
+    {% endif %}
+    {# 資格者マスタ (q_staff): 資格管理メニュー内で完結する独立画面。
+       cc_workers/日報側からは独立。qualifications.manager のみ。 #}
+    {% if has_perm(user, 'qualifications', 'manager') %}
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'staff' %}active{% endif %}"
+           href="/qualifications/staff">
+            <i class="bi bi-people me-1"></i>資格者管理
+        </a>
+    </li>
+    {% endif %}
+    {% if has_perm(user, 'qualifications_master', 'manager') %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'master' %}active{% endif %}"
            href="/master/qualifications">

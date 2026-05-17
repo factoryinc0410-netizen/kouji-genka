@@ -11,9 +11,14 @@
     なしで書けるようにする。
   - SMTP 設定 (server / from / to) のいずれかが欠けていれば送信は skip され、
     "smtp_not_configured" として記録される。設定不備で cron が落ちないため。
+  - **抽出ロジックは UI のお知らせと共通化** (DRY):
+    ``web_app.services.qualifications_alerts`` に単一の SQL を集約し、
+    UI (aiosqlite) と本モジュール (sqlite3) の双方が同じ条件・同じ
+    バインド変数で問い合わせる。q_staff inactive のスタッフはどちらの
+    経路でも除外される。
 
 公開 API:
-  - collect_expiring_certs(db_path, today=None) -> dict
+  - collect_expiring_certs(db_path, today=None) -> dict  (旧 API シグネチャ維持)
   - build_alert_email(alerts, today=None) -> (subject, text, html)
   - send_alert_email(subject, text, html, smtp_config) -> None
   - run_alert_job(db_path, smtp_config, today=None) -> dict (実行結果サマリ)
@@ -26,76 +31,47 @@ from __future__ import annotations
 
 import logging
 import smtplib
-import sqlite3
-from datetime import date, timedelta
+from datetime import date
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+
+from web_app.services.qualifications_alerts import (
+    ALERT_THRESHOLD_DAYS,
+    fetch_alert_rows_sync,
+    group_alert_rows,
+)
 
 logger = logging.getLogger("web_app.email_service")
 
 
 # ────────────────────────────────────────────
-# データ抽出
+# データ抽出 (UI のお知らせ枠と DRY)
 # ────────────────────────────────────────────
 
 def collect_expiring_certs(
     db_path: str | Path,
     *,
     today: date | None = None,
-    threshold_days: int = 30,
+    threshold_days: int = ALERT_THRESHOLD_DAYS,
 ) -> dict[str, list[dict]]:
     """期限切れ + ``threshold_days`` 日以内に期限到来する cert を分類して返す。
 
-    対象条件:
-      - ``status = 'confirmed'``        (archived / draft は除外)
-      - ``renewal_required = 1``        (更新不要なものはアラート対象外)
-      - ``expires_on IS NOT NULL``      (期限不明は除外)
-      - ``expires_on <= today + threshold_days``
+    抽出条件は ``qualifications_alerts.fetch_alert_rows_sync`` に集約済みで、
+    UI のお知らせ枠 (``_fetch_notifications``) と完全に同一の集合を返す
+    (status='confirmed' / renewal_required=1 / expires_on NOT NULL /
+    q_staff.is_active=1 / expires_on <= today + threshold_days)。
 
     戻り値:
-        ``{"expired": [...], "urgent": [...]}``
-        各要素は cert + worker + qual を JOIN した dict に
-        ``days_remaining`` (期限切れの場合は負数) を付与したもの。
+        ``{"expired": [...], "urgent": [...]}`` (旧 API シグネチャ互換)
+        各要素は cert + worker + qual を JOIN した dict に、
+        SQL で計算済の ``days_remaining`` (expired は <=0) と
+        ``bucket`` ('expired' or 'urgent') を持つ。
     """
-    today = today or date.today()
-    threshold_iso = (today + timedelta(days=threshold_days)).isoformat()
-
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        """
-        SELECT  c.cert_id, c.certificate_no, c.expires_on, c.issued_on,
-                w.worker_id, w.worker_name, w.group_name,
-                ql.name AS qual_name, ql.category AS qual_category
-          FROM  q_certificates c
-          JOIN  cc_workers w        ON  w.worker_id = c.worker_id
-          JOIN  q_qualifications ql ON  ql.qual_id  = c.qual_id
-         WHERE  c.status            = 'confirmed'
-           AND  c.renewal_required  = 1
-           AND  c.expires_on IS NOT NULL
-           AND  c.expires_on        <= ?
-         ORDER BY c.expires_on, w.worker_name
-        """,
-        (threshold_iso,),
-    ).fetchall()
-    conn.close()
-
-    expired: list[dict] = []
-    urgent: list[dict] = []
-    for r in rows:
-        d = dict(r)
-        try:
-            exp = date.fromisoformat(d["expires_on"])
-        except (TypeError, ValueError):
-            continue
-        days = (exp - today).days
-        d["days_remaining"] = days
-        if days <= 0:
-            expired.append(d)
-        elif days <= threshold_days:
-            urgent.append(d)
-    return {"expired": expired, "urgent": urgent}
+    rows = fetch_alert_rows_sync(
+        db_path, today=today, threshold_days=threshold_days,
+    )
+    return group_alert_rows(rows)
 
 
 # ────────────────────────────────────────────

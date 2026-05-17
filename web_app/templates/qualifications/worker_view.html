@@ -108,7 +108,7 @@
             <i class="bi bi-table me-1"></i>保有資格一覧
             <span class="badge bg-secondary ms-1">{{ certificates|length }} 件</span>
         </span>
-        {% if user.is_admin and certificates|length > 0 %}
+        {% if has_perm(user, 'qualifications', 'manager') and certificates|length > 0 %}
         <div class="d-flex gap-2">
             <a href="/qualifications/manual-add" class="btn btn-sm btn-outline-success">
                 <i class="bi bi-plus-square me-1"></i>追加
@@ -127,7 +127,7 @@
                         <th>有効期限</th>
                         <th class="text-center">残日数</th>
                         <th>原本</th>
-                        {% if user.is_admin %}
+                        {% if has_perm(user, 'qualifications', 'manager') %}
                         <th class="text-center" style="width: 100px;">操作</th>
                         {% endif %}
                     </tr>
@@ -180,7 +180,7 @@
                                 <span class="text-muted">—</span>
                             {% endif %}
                         </td>
-                        {% if user.is_admin %}
+                        {% if has_perm(user, 'qualifications', 'manager') %}
                         <td class="text-center">
                             <a href="/qualifications/edit/{{ c.cert_id }}"
                                class="btn btn-sm btn-outline-primary"
@@ -201,10 +201,10 @@
                     {% endfor %}
                     {% if certificates|length == 0 %}
                     <tr>
-                        <td colspan="{{ 7 if user.is_admin else 6 }}" class="text-center text-muted py-5">
+                        <td colspan="{{ 7 if has_perm(user, 'qualifications', 'manager') else 6 }}" class="text-center text-muted py-5">
                             <i class="bi bi-inbox display-6 d-block mb-2"></i>
                             この作業員の保有資格はまだ登録されていません。
-                            {% if user.is_admin %}
+                            {% if has_perm(user, 'qualifications', 'manager') %}
                             <div class="mt-3 d-flex gap-2 justify-content-center">
                                 <a href="/qualifications/upload" class="btn btn-primary btn-sm">
                                     <i class="bi bi-cloud-arrow-up me-1"></i>アップロード

@@ -1,15 +1,76 @@
 {% extends "base.html" %}
 {% block title %}ユーザー管理 — Factoryskills{% endblock %}
 
+{% block head %}
+<style>
+  /* ── ユーザー管理画面 専用レイアウト (1画面フィット) ──
+     base.html の .main-content (margin-top:56px) と container-fluid.py-4 (48px)
+     の内側で 100vh から両者を引いた高さを占有し、内部だけスクロールする。 */
+  .fit-viewport-page {
+    height: calc(100vh - 56px - 3rem - 1rem);  /* navbar + py-4 + 右下バッジ余裕 */
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow: hidden;
+  }
+  /* 固定高（自動）セクション */
+  .fit-viewport-page > .page-header,
+  .fit-viewport-page > .alert,
+  .fit-viewport-page > .page-note,
+  .fit-viewport-page > .audit-pane > .audit-header,
+  .fit-viewport-page > .audit-pane > form,
+  .fit-viewport-page > .audit-pane > .audit-empty,
+  .fit-viewport-page > .audit-pane > nav { flex: 0 0 auto; }
+
+  /* 可変高（残りスペースを占有・内部スクロール）の 2 ペイン */
+  .fit-viewport-page > .users-pane,
+  .fit-viewport-page > .audit-pane,
+  .fit-viewport-page > .audit-pane > .card,
+  .fit-viewport-page > .users-pane > .card,
+  .fit-viewport-page > .users-pane > .card > .card-body,
+  .fit-viewport-page > .audit-pane > .card > .card-body {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .fit-viewport-page .scroll-area {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: auto;
+  }
+
+  /* スクロール中も見出し行を見えるようにする */
+  .fit-viewport-page .scroll-area table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8f9fa;
+    box-shadow: inset 0 -1px 0 #dee2e6;
+  }
+
+  /* 余白の引き締め */
+  .fit-viewport-page .page-header { margin-bottom: 0 !important; }
+  .fit-viewport-page .page-note   { margin: 0; font-size: 0.8rem; }
+  .fit-viewport-page .audit-header h4 { margin-bottom: 0.25rem; }
+  .fit-viewport-page .audit-pane > form { margin-bottom: 0 !important; }
+  .fit-viewport-page > .audit-pane > nav { margin-top: 0.25rem !important; }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex align-items-center mb-3 flex-wrap gap-2">
+<div class="fit-viewport-page">
+
+
+<div class="page-header d-flex align-items-center mb-3 flex-wrap gap-2">
   <a href="/" class="btn btn-link text-decoration-none px-0">
     <i class="bi bi-arrow-left me-1"></i>ポータルへ戻る
   </a>
-  <h2 class="ms-3 mb-0">
+  <h2 class="ms-3 mb-0 fs-4">
     <i class="bi bi-people-fill me-2"></i>ユーザー管理
   </h2>
-  <a href="/admin/users/create" class="btn btn-primary ms-auto">
+  <a href="/admin/users/create" class="btn btn-primary btn-sm ms-auto">
     <i class="bi bi-plus-lg me-1"></i>新規発行
   </a>
 </div>
@@ -38,9 +99,10 @@
 </div>
 {% endfor %}
 
+<section class="users-pane">
 <div class="card shadow-sm">
   <div class="card-body p-0">
-    <div class="table-responsive">
+    <div class="table-responsive scroll-area">
       <table class="table table-hover align-middle mb-0">
         <thead class="table-light">
           <tr>
@@ -137,8 +199,9 @@
     </div>
   </div>
 </div>
+</section>
 
-<p class="text-muted small mt-3 mb-0">
+<p class="page-note text-muted small">
   <i class="bi bi-info-circle me-1"></i>
   ユーザーを無効化すると当該ユーザーの既存セッションは即時破棄されます。
   パスワードリセット後の本人は、次回ログイン時にパスワード変更が必須になります。
@@ -146,13 +209,15 @@
 </p>
 
 {# ── 監査ログ（フィルタ + ページネーション） ── #}
-<div class="mt-5">
-  <h4 class="mb-2">
+<section class="audit-pane">
+  <div class="audit-header">
+  <h4 class="mb-2 fs-5">
     <i class="bi bi-journal-text me-2"></i>監査ログ
     <small class="text-muted fs-6">
       （該当 {{ audit_total }} 件 / {{ audit_page }} ページ目 / 全 {{ audit_total_pages }} ページ）
     </small>
   </h4>
+  </div>
 
   {# フィルタ — プルダウン変更で即送信 #}
   <form method="get" action="/admin/users" class="row g-2 align-items-center mb-3">
@@ -195,7 +260,7 @@
   {% if audit_logs %}
   <div class="card shadow-sm">
     <div class="card-body p-0">
-      <div class="table-responsive">
+      <div class="table-responsive scroll-area">
         <table class="table table-sm table-striped align-middle mb-0">
           <thead class="table-light">
             <tr>
@@ -258,7 +323,7 @@
     </div>
   </div>
   {% else %}
-  <p class="text-muted small">該当する監査ログはありません。</p>
+  <p class="audit-empty text-muted small">該当する監査ログはありません。</p>
   {% endif %}
 
   {# ページネーション — 該当件数 0 でも前ページへ戻る導線は残す #}
@@ -282,7 +347,9 @@
     </ul>
   </nav>
   {% endif %}
-</div>
+</section>
+
+</div>{# /.fit-viewport-page #}
 {% endblock %}
 
 {% block scripts %}

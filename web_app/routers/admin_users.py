@@ -60,6 +60,27 @@ _FEATURE_CATALOG: list[tuple[str, str, str]] = [
         "注文書作成",
         "general: ジョブ一覧/状態確認/成果物DL / manager: Excel アップロード・発行（キュー投入）",
     ),
+    (
+        "qualifications",
+        "資格者証管理",
+        "general: 資格者証の閲覧・操作 (一覧/検索/CSV/PDF/作業員別) / "
+        "manager: アップロード/編集/削除/復元/手動追加",
+    ),
+    (
+        "qualifications_master",
+        "資格マスタ",
+        "manager: 資格マスタの編集 (新規追加/カテゴリ変更/有効年数編集/論理無効化)",
+    ),
+    # kouji-genka (KGK) アドオン側への入口アクセス権。Factoryskills 側ではポータルに
+    # 「工事原価管理」カードを表示する／しないを制御するだけで、KGK 内部の細粒度
+    # 権限 (admin/planner/viewer や工事単位 ABAC) は KGK 側で別途管理する。
+    # 詳細: skills/kouji-genka/docs/adr/ADR-001-addon-integration-strategy.md
+    (
+        "kouji_genka",
+        "工事原価管理 (KGK)",
+        "general: ポータルから KGK 画面への入口を表示。KGK 内のロール (admin/planner/viewer) と "
+        "工事単位 ABAC は KGK 側で別途管理する (Phase 1 は二段階制御)。",
+    ),
 ]
 _VALID_FEATURE_KEYS: frozenset[str] = frozenset(k for k, _, _ in _FEATURE_CATALOG)
 

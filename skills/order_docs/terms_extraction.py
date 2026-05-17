@@ -271,10 +271,10 @@ def extract_terms_data(
             company=_cell_str_preserve(ws, 63, 3) or "",
             name=_cell_str_preserve(ws, 64, 3) or "",
         )
-        # 右側（下請）: 行 62:商, 63:住, 64:氏 — F列に値（F:G merged）
+        # 右側（下請）: 行 62:住, 63:商, 64:氏 — F列に値（F:G merged）
         result.shitauke = TermsParty(
-            address=_cell_str_preserve(ws, 63, 6) or "",
-            company=_cell_str_preserve(ws, 62, 6) or "",
+            address=_cell_str_preserve(ws, 62, 6) or "",
+            company=_cell_str_preserve(ws, 63, 6) or "",
             name=_cell_str_preserve(ws, 64, 6) or "",
         )
 

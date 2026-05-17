@@ -33,6 +33,15 @@ DEPARTMENTS = [
                 "url": "/orders/",
                 "color": "primary",
             },
+            {
+                "id": "qualifications",
+                "feature": "qualifications",
+                "name": "資格者証管理",
+                "description": "作業員の資格者証を一元管理し、有効期限の近接 (180/60/30 日) を可視化します。",
+                "icon": "bi-patch-check",
+                "url": "/qualifications/",
+                "color": "primary",
+            },
         ],
     },
     {
@@ -49,6 +58,27 @@ DEPARTMENTS = [
                 "url": "/construction-cost/",
                 "color": "success",
             },
+            {
+                "id": "daika_link",
+                "feature": "daika_link",
+                "name": "代価表リンク設定",
+                "description": "代価表 Excel の基準列に、同名の代価明細行（単/施/P/明 N 号）への内部ハイパーリンクを自動付与します。",
+                "icon": "bi-link-45deg",
+                "url": "/daika-link/",
+                "color": "success",
+            },
+            # kouji-genka (KGK) アドオン — 別プロセスで稼働する独立 Web アプリへの導線。
+            # 認証/データは Factoryskills とは別建て (Phase 1)、入口だけ統合する方式。
+            # 詳細: skills/kouji-genka/docs/adr/ADR-001-addon-integration-strategy.md
+            {
+                "id": "kouji_genka",
+                "feature": "kouji_genka",
+                "name": "工事原価管理",
+                "description": "実行予算の編成・改定・承認ワークフロー、予算消化率ダッシュボードを提供します。",
+                "icon": "bi-graph-up-arrow",
+                "url": "/kgk/",
+                "color": "success",
+            },
         ],
     },
     {
@@ -56,21 +86,6 @@ DEPARTMENTS = [
         "name": "建築部",
         "icon": "bi-house-door",
         "tools": [],
-    },
-    {
-        "id": "safety",
-        "name": "安全衛生",
-        "icon": "bi-shield-check",
-        "tools": [
-            {
-                "id": "qualifications",
-                "name": "資格者証管理",
-                "description": "作業員の資格者証を一元管理し、有効期限の近接 (180/60/30 日) を可視化します。",
-                "icon": "bi-patch-check",
-                "url": "/qualifications/",
-                "color": "primary",
-            },
-        ],
     },
 ]
 

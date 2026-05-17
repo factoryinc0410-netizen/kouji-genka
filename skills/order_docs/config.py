@@ -26,7 +26,7 @@ from web_app.core.config import LIBREOFFICE_TIMEOUT as LIBREOFFICE_TIMEOUT  # no
 # 参照先:
 # - UI 右下のバッジに「注文書作成 v{ORDER_DOCS_VERSION}」として表示される
 # - CSS/JS の読込 URL にも（CORE_VERSION と結合して）付与される
-ORDER_DOCS_VERSION: str = "2.4.0-extractor-modularization"
+ORDER_DOCS_VERSION: str = "2.7.3-prod-sync-ready"
 
 # 旧 APP_VERSION は後方互換のためエイリアスとして残置する。
 # 新規コードでは必ず ORDER_DOCS_VERSION を参照すること。
@@ -156,12 +156,12 @@ _STAMP_SHODAKU: list[dict] = [
     {"key": "daikyo_koseiin",  "page": 0, "type": "rect", "rect": (278, 597, 550, 617), "size": 11, "align": 0, "fontpath": MS_MINCHO},
 
     # 下請業者住所
-    {"key": "vendor_address",  "page": 0, "type": "rect", "rect": (278, 690, 550, 710), "size": 12, "align": 0, "fontpath": MS_MINCHO},
-    
+    {"key": "vendor_address",  "page": 0, "type": "rect", "rect": (278, 670, 550, 690), "size": 12, "align": 0, "fontpath": MS_MINCHO},
+
     # 下請業者名（3箇所）
     {"key": "vendor_company",  "page": 0, "type": "rect", "rect": (200, 173, 329, 196), "size": 12, "align": 1, "fontpath": MS_MINCHO}, # 1箇所目
     {"key": "vendor_company",  "page": 0, "type": "rect", "rect": (332, 534, 461, 557), "size": 12, "align": 1, "fontpath": MS_MINCHO}, # 2箇所目
-    {"key": "vendor_company",  "page": 0, "type": "rect", "rect": (278, 670, 550, 690), "size": 12, "align": 0, "fontpath": MS_MINCHO}, # 3箇所目
+    {"key": "vendor_company",  "page": 0, "type": "rect", "rect": (278, 690, 550, 710), "size": 12, "align": 0, "fontpath": MS_MINCHO}, # 3箇所目
 ]
 
 PDF_STAMP_MAP: dict[str, list[dict]] = {
@@ -195,6 +195,12 @@ PDF_TEMPLATES: dict[str, str] = {
 }
 
 # ── 契約条件書スタンプ座標（Route A: PDFスタンプ方式） ──────
+# ⚠️ 【現在 未使用】契約条件書は HTML 生成方式（html_templates/condition.html →
+#     html_pdf_builder.build_condition_pdf）に移行済みのため、以下の _STAMP_JOKEN
+#     は実出力に反映されない。スタンプ位置を変えても PDF 上の見た目は変化しない。
+#     将来 PDF スタンプ方式へ戻す可能性があるためコードと座標は残置している。
+#     レイアウト調整は condition.html を編集すること。
+#
 # テンプレート「契約条件書（空ファイル）.pdf」は 595.2×842.0 pt (A4)。
 #
 # 座標の求め方（将来の調整用メモ）:
@@ -717,3 +723,12 @@ EXCEL_SCAN_LIMITS: dict = {
 #   右隣のセルに視覚的にはみ出さない」という経験則に基づく。
 #   運用で調整が必要になれば、6〜10 の範囲で変更するのが安全。
 NAIRAKU_AUTO_MERGE_THRESHOLD: int = 15
+
+# ── 内訳書 塗りつぶしセル背景色 ───────────────────────────
+# Excel 原本でセルに塗りつぶしが設定されている箇所を、HTML/PDF 出力でも
+# 視覚的に区別するための背景色。色そのものは Excel 側の元色を再現せず、
+# 工種・種別ヘッダ列の薄いグレーに合わせた一律指定とする。
+# 抽出側 (nairaku_extraction.py) は「塗りつぶしが付いているか否か」だけを
+# bool で記録し、実際の色描画は本定数を参照する単一クラス (.filled-cell)
+# で行う。
+NAIRAKU_FILL_COLOR: str = "#f2f2f2"

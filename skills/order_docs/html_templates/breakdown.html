@@ -235,6 +235,10 @@
   /* 太字セル（is_bold=True） */
   td.bold { font-weight: bold; }
 
+  /* 塗りつぶしセル — 抽出側が Excel 原本に塗りつぶしを検知した列に付与。
+     色は単色固定 (config.NAIRAKU_FILL_COLOR と同値) で、Excel 側の元色は再現しない。 */
+  td.filled-cell { background-color: #f2f2f2; }
+
 </style>
 </head>
 <body>
@@ -376,11 +380,22 @@
   {%- endmacro %}
 
   {# 1 行分のセル列を描画する共通マクロ。row.visible_cells() の結果を
-     走査し、各セルに colspan（span>1 のみ）と CSS クラスを付与する。 #}
+     走査し、各セルに colspan（span>1 のみ）と CSS クラスを付与する。
+     cell.filled が True の列には filled-cell クラスを追加し、
+     config.NAIRAKU_FILL_COLOR と同値の単色背景を当てる。
+
+     cell.bg_color が設定されている場合（例:「直接工事費計」行）は、
+     インラインスタイル style="background-color: ...;" を付与して
+     行全体を端から端まで同色で塗る。インラインスタイルは CSS クラス
+     より優先されるため、.filled-cell / .row-subtotal td 等の既存
+     背景色とは自動的に競合せず行レベル指定が勝つ。 #}
   {% macro render_cells(row) -%}
     {%- for cell in row.visible_cells() -%}
       {%- set css = cell_css(cell.col, row.row_type, row.is_bold) -%}
-      <td{% if cell.span > 1 %} colspan="{{ cell.span }}"{% endif %}{% if css %} class="{{ css }}"{% endif %}>{{ cell.value|e or '&nbsp;'|safe }}</td>
+      {# bg_color が指定されている列は filled-cell クラスを付けない
+         （インラインスタイルが優先されるため冗長を避ける）。 #}
+      {%- set cls = (css ~ (' filled-cell' if (cell.filled and not cell.bg_color) else ''))|trim -%}
+      <td{% if cell.span > 1 %} colspan="{{ cell.span }}"{% endif %}{% if cls %} class="{{ cls }}"{% endif %}{% if cell.bg_color %} style="background-color: {{ cell.bg_color }};"{% endif %}>{{ cell.value|e or '&nbsp;'|safe }}</td>
     {%- endfor -%}
   {%- endmacro %}
 

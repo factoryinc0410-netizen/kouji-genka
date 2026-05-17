@@ -142,6 +142,21 @@ class NairakuRow:
     # 不変条件: sum(s for s in col_spans if s >= 1) == 15。
     col_spans: list[int] = field(default_factory=lambda: [1] * 15)
 
+    # ── 塗りつぶし情報（15 列分） ────────────────────────────────
+    # Excel 原本でセルに塗りつぶしパターンが設定されているかを 0-indexed
+    # (A=0 … O=14) で保持する。具体色は記録せず「塗られているか否か」
+    # の bool のみ。HTML 出力時は config.NAIRAKU_FILL_COLOR を背景色とする
+    # 単一クラス (.filled-cell) を、True の列にだけ付与する。
+    has_fills: list[bool] = field(default_factory=lambda: [False] * 15)
+
+    # ── 行レベル背景色（15 列分） ──────────────────────────────
+    # 「直接工事費計」など、行全体を端から端まで同色で塗りたいケース用。
+    # 各要素は CSS 色文字列（例: '#F2F2F2'）または None（指定なし）。
+    # None の列は背景色を上書きせず、CSS の既定（row_type のスタイル等）
+    # に従う。has_fills と異なり、Excel 原本の塗りつぶしとは独立に
+    # 抽出側で行単位に設定する想定。
+    bg_colors: list[str | None] = field(default_factory=lambda: [None] * 15)
+
     def to_table_row(self, has_henkou: bool = True) -> list[str]:
         """テンプレート用の15要素セル配列に変換する。
 
@@ -229,6 +244,16 @@ class NairakuRow:
                 "col": i,
                 "value": values[i],
                 "span": span,
+                "filled": (
+                    self.has_fills[i]
+                    if i < len(self.has_fills)
+                    else False
+                ),
+                "bg_color": (
+                    self.bg_colors[i]
+                    if i < len(self.bg_colors)
+                    else None
+                ),
             })
         return result
 

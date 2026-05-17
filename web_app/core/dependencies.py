@@ -144,25 +144,69 @@ class RequirePermission:
         return user
 
 
+class RequireAnyPermission:
+    """複数 (feature_name, required_level) の **いずれか** が満たされれば許可する OR ガード。
+
+    用途例: 同じ画面/エンドポイントが複数の機能から共有される場合
+    (例: スタッフマスタは ``daily_report.manager`` でも ``qualifications.manager`` でも
+    操作できるべき) に、エンドポイント側でガードを 1 個書くだけで済むように。
+
+    - 1 つでも ``has_permission`` が True を返せばアクセス許可。
+    - 全て False なら 403 を返す (詳細メッセージにはチェックした全ペアを列挙)。
+    - is_admin=True のユーザーは ``has_permission`` のショートカットにより常に許可。
+    """
+
+    __slots__ = ("checks",)
+
+    def __init__(self, checks: list[tuple[str, str]]) -> None:
+        if not checks:
+            raise ValueError("RequireAnyPermission には少なくとも 1 つの (feature, level) が必要です")
+        self.checks = tuple(checks)
+
+    async def __call__(
+        self, user: dict = Depends(get_current_user)
+    ) -> dict:
+        for feature_name, required_level in self.checks:
+            if has_permission(user, feature_name, required_level):
+                return user
+        labels = " または ".join(
+            f"『{f}』の『{lvl}』以上" for f, lvl in self.checks
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"この操作には {labels} の権限が必要です。",
+        )
+
+
 async def verify_csrf_token(
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """フォーム/multipart の csrf_token をセッションのトークンと突き合わせる。
+    """csrf_token をセッションのトークンと突き合わせる。
 
-    成功時はそのまま user dict を返すので、エンドポイント側は
-    `user: dict = Depends(verify_csrf_token)` と書けば認証＋CSRF を1回で要求できる。
+    受理するソース (この順で評価し、最初に見つかった非空値を採用):
+      1. ``X-CSRF-Token`` ヘッダー  (AJAX / fetch リクエスト用)
+      2. フォームの hidden input ``csrf_token``  (HTML form submit 用)
+
+    どちらにも入っていない / 値不一致なら 403。成功時はそのまま user dict を
+    返すので、エンドポイント側は ``Depends(verify_csrf_token)`` で認証＋CSRF を
+    1 回で要求できる。
     """
     expected = user.get("csrf_token")
 
-    # request.form() は内部キャッシュされ、後段の Form(...) 引数とも共存できる
-    try:
-        form = await request.form()
-    except Exception:
-        form = {}
-    submitted = form.get(CSRF_FORM_FIELD) if form else None
+    # 1) AJAX 経路: X-CSRF-Token ヘッダー (大小区別なしに 1 つだけ拾う)
+    submitted: str | None = request.headers.get("x-csrf-token")
 
-    if not tokens_match(submitted if isinstance(submitted, str) else None, expected):
+    # 2) form / multipart 経路 (ヘッダーが空のときのみ)
+    if not submitted:
+        try:
+            form = await request.form()
+        except Exception:
+            form = {}
+        raw = form.get(CSRF_FORM_FIELD) if form else None
+        submitted = raw if isinstance(raw, str) else None
+
+    if not tokens_match(submitted, expected):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CSRF token validation failed",
