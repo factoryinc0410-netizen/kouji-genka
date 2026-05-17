@@ -5,6 +5,7 @@ Factory Chat Platform — バックエンド
 
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, date
 from typing import Optional
 
@@ -114,8 +115,6 @@ async def init_db():
 
 
 # ── FastAPI アプリ ────────────────────────────────────────────
-
-from contextlib import asynccontextmanager
 
 
 @asynccontextmanager

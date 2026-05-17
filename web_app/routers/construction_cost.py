@@ -21,6 +21,15 @@ from web_app.core.dependencies import RequirePermission, RequireAnyPermission
 from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
 
+from skills.construction_cost.aggregator import aggregate
+from skills.construction_cost.reader import normalize_str, read_daily_sheets
+from skills.construction_cost.template_builder import build_template
+from skills.construction_cost.writer import (
+    write_dashboard_export,
+    write_site_cost_report,
+    write_worker_summary,
+)
+
 # 機能名 — user_permissions.feature_name と一致させること。
 # このルーター内のすべての権限ガードはこの値で評価される。
 _FEATURE_KEY = "daily_report"
@@ -38,13 +47,6 @@ _RequireWorkersManager = RequireAnyPermission([
     (_FEATURE_KEY, "manager"),
     ("qualifications", "manager"),
 ])
-
-from skills.construction_cost.reader import read_daily_sheets, normalize_str
-from skills.construction_cost.aggregator import aggregate
-from skills.construction_cost.writer import (
-    write_site_cost_report, write_worker_summary, write_dashboard_export,
-)
-from skills.construction_cost.template_builder import build_template
 
 logger = logging.getLogger("web_app.construction_cost")
 
@@ -216,11 +218,11 @@ async def _build_dashboard_data(db, target_month: str | None = None) -> list[dic
     current_logs = await cur_logs_current.fetchall()
 
     # 指定月以前の全グループ別累計コスト
-    all_agg_data = [json.loads(l["aggregated_json"]) for l in all_logs]
+    all_agg_data = [json.loads(row["aggregated_json"]) for row in all_logs]
     all_sg_costs = _compute_site_group_costs(all_agg_data)
 
     # 指定月ぴったりのグループ別当月コスト（当月支払いのみに使用）
-    current_agg_data = [json.loads(l["aggregated_json"]) for l in current_logs]
+    current_agg_data = [json.loads(row["aggregated_json"]) for row in current_logs]
     current_sg_costs = _compute_site_group_costs(current_agg_data)
 
     # グループ予算マスタを取得（登録順 = id順）

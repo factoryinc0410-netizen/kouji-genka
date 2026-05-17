@@ -126,7 +126,7 @@ class TestExtractTermsData:
         from skills.order_docs.terms_extraction import extract_terms_data
         from skills.order_docs.terms_models import TermsData
 
-        vendors = extract_data(sample_excel)
+        extract_data(sample_excel)
         td = extract_terms_data(sample_excel, 1)
         assert isinstance(td, TermsData)
         assert len(td.sections) >= 1, "契約条件書のセクションが 0"

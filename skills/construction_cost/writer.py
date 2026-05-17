@@ -170,7 +170,6 @@ def write_worker_summary(result: AggregationResult, output_dir: Path) -> Path:
     row = 4
     current_group = None
     group_cost = 0.0
-    group_start_row = row
 
     summaries = result.worker_summaries
 
@@ -181,7 +180,6 @@ def write_worker_summary(result: AggregationResult, output_dir: Path) -> Path:
         if current_group is not None and grp != current_group:
             row = _write_group_subtotal(ws, row, current_group, group_cost, len(headers))
             group_cost = 0.0
-            group_start_row = row
 
         current_group = grp
         total_hours = ws_row.total_basic + ws_row.total_overtime

@@ -21,3 +21,9 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning:pypdf.*",
 ]
+
+[tool.ruff]
+# kouji-genka は dev-app 配下に置かれているが別 git repo (kouji-genka-app.git) で
+# 独自に Biome で lint されている。dev-app 側の ruff でチェックすると当該 repo の
+# 管轄外コードの違反まで報告されるため除外する。
+extend-exclude = ["skills/kouji-genka"]

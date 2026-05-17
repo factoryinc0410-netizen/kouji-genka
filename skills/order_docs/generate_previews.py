@@ -219,7 +219,7 @@ def _generate_one(
                 if direction:
                     # MS明朝フォントを登録（囲み文字用）
                     _ms_mincho = config.MS_MINCHO
-                    circle_fn = f"circle-mincho"
+                    circle_fn = "circle-mincho"
                     try:
                         page.insert_font(fontname=circle_fn, fontfile=_ms_mincho)
                     except Exception:

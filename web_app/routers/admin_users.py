@@ -325,7 +325,8 @@ async def export_audit_logs_csv(
         buf.write("\ufeff")
         writer.writerow(headers)
         yield buf.getvalue()
-        buf.seek(0); buf.truncate(0)
+        buf.seek(0)
+        buf.truncate(0)
 
         for r in rows:
             writer.writerow([
@@ -339,7 +340,8 @@ async def export_audit_logs_csv(
                 r["ip_address"] or "",
             ])
             yield buf.getvalue()
-            buf.seek(0); buf.truncate(0)
+            buf.seek(0)
+            buf.truncate(0)
 
     filename = f"audit_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     logger.info(

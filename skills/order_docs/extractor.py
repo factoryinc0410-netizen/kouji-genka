@@ -84,7 +84,7 @@ def extract_data(excel_path: Path) -> list[dict[str, str | None]]:
     common_keywords = excel_map["common_keywords"]
     vendor_keywords = excel_map["vendor_keywords"]
     fallback_base_cols: list[int] = excel_map["vendor_base_cols"]
-    kingaku_sub_kw: dict[str, str] = excel_map.get("kingaku_sub_keywords", {})
+    excel_map.get("kingaku_sub_keywords", {})
 
     wb = openpyxl.load_workbook(str(excel_path), data_only=True)
     try:

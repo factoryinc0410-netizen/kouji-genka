@@ -350,7 +350,8 @@ class TestEditPost:
             """,
             (cert_id, _cert_no_for(cert_id), f'["{unique_path}"]'),
         )
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
         # 旧物理ファイルを作成
         old_dir = app_env["staging_root"] / unique_job
@@ -407,7 +408,8 @@ class TestEditPost:
                 """,
                 (cid, _cert_no_for(cid), f'["{shared_path}"]'),
             )
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
         # 物理ファイルを共有 staging に置く (両 cert から参照される)
         old_dir = app_env["staging_root"] / shared_job

@@ -296,7 +296,6 @@ class TestJobDeleteApi:
         ユーザー指示の「物理ファイル削除が確実に行われること」を、
         複数ファイル + ディレクトリ存在チェックで明示的に検証する end-to-end テスト。
         """
-        from pathlib import Path
         job_id = "test_await_e2e_005"
         # 候補ありの await_review ジョブを seed (複数ファイル)
         _seed_job(
@@ -378,7 +377,8 @@ class TestPendingPageDeleteButton:
         # 他テストで残った job を一旦掃除して進行中ジョブのみ存在する状態に
         conn = sqlite3.connect(str(app_env["db_path"]))
         conn.execute("DELETE FROM q_upload_jobs")
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
         job_id = "test_pending_progress_003"
         _seed_job(app_env["db_path"], app_env["staging_root"],
@@ -723,7 +723,8 @@ class TestJobStatusApi:
             "WHERE job_id=?",
             ("OCR エラー (RuntimeError)", job_id),
         )
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
         r = app_env["client"].get(f"/qualifications/jobs/{job_id}/status")
         assert r.status_code == 200
