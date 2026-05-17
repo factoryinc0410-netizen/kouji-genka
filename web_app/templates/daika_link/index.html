@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}代価表リンク設定 - Factoryskills{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><i class="bi bi-link-45deg me-2"></i>代価表リンク設定</h3>
+</div>
+
+<p class="text-muted mb-4">
+    代価表 Excel の「基準」列に書かれた参照キーワード
+    （<code>単 N 号</code> / <code>施 N 号</code> /
+    <code>Ｐ N 号</code> / <code>明 N 号</code>）を、
+    同一ワークブック内の代価明細行への <strong>内部ハイパーリンク</strong> に自動変換します。
+    元ファイルは変更せず、<code>_linked.xlsx</code> を新規ダウンロードします。
+</p>
+
+{% if msg %}
+<div class="alert alert-{{ cat or 'info' }} alert-dismissible fade show" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{% if has_perm(user, 'daika_link', 'manager') %}
+<!-- アップロード -->
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-upload me-1"></i>Excel ファイルのアップロード
+    </div>
+    <div class="card-body">
+        <form method="post" action="/daika-link/process"
+              enctype="multipart/form-data" id="daikaLinkForm">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label fw-bold">代価表 Excel（.xlsx）</label>
+                    <input type="file" name="file" class="form-control"
+                           accept=".xlsx" required>
+                    <small class="text-muted">
+                        ※ サイズ上限 {{ max_upload_mb }}MB。
+                          シート保護・マクロ付きファイル（.xlsm）は v1 では未対応。
+                    </small>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-primary w-100" id="btnSubmit">
+                        <i class="bi bi-link me-1"></i>リンクを付与する
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-secondary">
+    <i class="bi bi-info-circle me-1"></i>
+    この機能を実行するには <strong>「代価表リンク設定」の manager 権限</strong> が必要です。
+    閲覧のみ可能なため、過去の出力ファイルがあれば管理者から共有を受けてください。
+</div>
+{% endif %}
+
+{% if result %}
+<!-- 処理結果 -->
+<div class="card mb-4 border-success">
+    <div class="card-header bg-success text-white">
+        <i class="bi bi-check-circle me-1"></i>処理結果
+    </div>
+    <div class="card-body">
+        <div class="row mb-3">
+            <div class="col-md-3">
+                <div class="border rounded p-3 text-center">
+                    <div class="text-muted small">スキャンしたシート</div>
+                    <div class="h4 mb-0">{{ result.sheets_scanned }}</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="border rounded p-3 text-center">
+                    <div class="text-muted small">登録ターゲット数</div>
+                    <div class="h4 mb-0">{{ result.targets_indexed }}</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="border rounded p-3 text-center bg-success bg-opacity-10">
+                    <div class="text-muted small">付与したリンク</div>
+                    <div class="h4 mb-0 text-success">{{ result.links_created }}</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="border rounded p-3 text-center">
+                    <div class="text-muted small">未マッチ</div>
+                    <div class="h4 mb-0
+                        {% if result.keywords_unmatched_total %}text-warning{% endif %}">
+                        {{ result.keywords_unmatched_total }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if result.basis_columns %}
+        <h6 class="mt-3"><i class="bi bi-table me-1"></i>基準列が見つかったシート</h6>
+        <table class="table table-sm table-bordered w-auto">
+            <thead class="table-light">
+                <tr><th>シート名</th><th>列</th></tr>
+            </thead>
+            <tbody>
+                {% for sheet, col in result.basis_columns.items() %}
+                <tr><td>{{ sheet }}</td><td class="text-center">{{ col }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if result.keywords_unmatched %}
+        <div class="alert alert-warning mt-3">
+            <strong>
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                マッチするターゲットが見つからなかったキーワード
+                {% if result.keywords_unmatched_total > result.keywords_unmatched|length %}
+                （先頭 {{ result.keywords_unmatched|length }} 件 /
+                 全 {{ result.keywords_unmatched_total }} 件）
+                {% endif %}
+            </strong>
+            <div class="mt-1">
+                {% for kw in result.keywords_unmatched %}
+                <span class="badge bg-warning text-dark me-1">{{ kw }}</span>
+                {% endfor %}
+            </div>
+            <small class="d-block text-muted mt-2">
+                ※ A〜D 列に同名セルが存在しないか、表記が大きく異なります。
+            </small>
+        </div>
+        {% endif %}
+
+        {% if result.duplicate_targets %}
+        <div class="alert alert-info mt-3">
+            <strong><i class="bi bi-info-circle me-1"></i>
+                複数箇所で重複定義されていたキーワード（最初の出現位置を採用）
+            </strong>
+            <div class="mt-1">
+                {% for kw in result.duplicate_targets %}
+                <span class="badge bg-info text-dark me-1">{{ kw }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <hr class="my-3">
+        <div class="d-flex align-items-center">
+            <a href="/daika-link/download/{{ result.filename }}"
+               class="btn btn-success">
+                <i class="bi bi-download me-1"></i>
+                リンク付与済みファイルをダウンロード
+            </a>
+            <span class="ms-3 text-muted small">
+                元ファイル: <code>{{ result.original_filename }}</code><br>
+                出力: <code>{{ result.filename }}</code>
+            </span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card bg-light">
+    <div class="card-body">
+        <h6><i class="bi bi-info-circle me-1"></i>処理ルール</h6>
+        <ul class="mb-0 small">
+            <li>各シートで「基準」ヘッダのある列をスキャンします（本工事費表は M 列）。</li>
+            <li>セル値に含まれる
+                <code>単/施/P/明 + 数字 + 号</code> を抽出して、
+                A〜D 列にある同名セル（例: <code>単1号</code>）を全シートから検索します。</li>
+            <li>マッチング前に <strong>NFKC 正規化 + 空白除去</strong>
+                を行うので、<code>単 1 号</code> / <code>単１号</code> / <code>Ｐ</code> ↔ <code>P</code>
+                は同一視されます。</li>
+            <li>ターゲットが結合セルなら結合範囲の左上にリンクします。</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var form = document.getElementById('daikaLinkForm');
+    if (!form) return;
+    form.addEventListener('submit', function () {
+        var btn = document.getElementById('btnSubmit');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>処理中...';
+        }
+    });
+})();
+</script>
+{% endblock %}
