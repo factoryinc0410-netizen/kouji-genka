@@ -2,6 +2,7 @@
 ポータルルーター — ダッシュボード（部署別ツール一覧）
 """
 import logging
+import os
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -13,6 +14,14 @@ from web_app.core.templates import templates as _templates
 logger = logging.getLogger("web_app.portal")
 
 router = APIRouter(tags=["portal"])
+
+# kouji-genka (KGK) アドオンの遷移先 URL。
+# - 本番: nginx が /kgk/ を 127.0.0.1:3000 (KGK Next.js) にプロキシする前提で
+#   既定値 "/kgk/" のまま。詳細は skills/kouji-genka/docs/adr/ADR-001-...md。
+# - 開発: 同居 nginx を立てない運用が多いため、.env で
+#   KGK_PORTAL_URL=http://localhost:3000 を指定して KGK の dev サーバへ
+#   直接遷移できるようにする。
+_KGK_PORTAL_URL = os.getenv("KGK_PORTAL_URL", "/kgk/")
 
 # ── 部署別ツール一覧 ────────────────────────────────────────
 # 新しいツールを追加する際は、該当部署の tools リストにエントリを追加するだけで OK。
@@ -76,7 +85,7 @@ DEPARTMENTS = [
                 "name": "工事原価管理",
                 "description": "実行予算の編成・改定・承認ワークフロー、予算消化率ダッシュボードを提供します。",
                 "icon": "bi-graph-up-arrow",
-                "url": "/kgk/",
+                "url": _KGK_PORTAL_URL,
                 "color": "success",
             },
         ],
