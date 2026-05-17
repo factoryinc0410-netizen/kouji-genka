@@ -49,6 +49,11 @@ Pillow>=10.4.0
 #   Windows      : poppler-windows を PATH に通す
 pdf2image>=1.17.0
 
+# === KGK SSO 統合 (ADR-003) ===
+# kgk-redis (127.0.0.1:6379) と共有するワンタイムチケットストアに使う。
+# Phase 2a 以降で web_app/core/redis_client.py が参照する。
+redis>=5.0.0
+
 # === Optional (CLI monitoring - not required for web) ===
 # watchdog>=4.0.0
 # plyer>=2.1.0

@@ -16,12 +16,12 @@ logger = logging.getLogger("web_app.portal")
 router = APIRouter(tags=["portal"])
 
 # kouji-genka (KGK) アドオンの遷移先 URL。
-# - 本番: nginx が /kgk/ を 127.0.0.1:3000 (KGK Next.js) にプロキシする前提で
-#   既定値 "/kgk/" のまま。詳細は skills/kouji-genka/docs/adr/ADR-001-...md。
-# - 開発: 同居 nginx を立てない運用が多いため、.env で
-#   KGK_PORTAL_URL=http://localhost:3000 を指定して KGK の dev サーバへ
-#   直接遷移できるようにする。
-_KGK_PORTAL_URL = os.getenv("KGK_PORTAL_URL", "/kgk/")
+# Phase 2a (ADR-003) で SSO 起点 (/sso/kgk/start) 経由が既定になった。
+# 認証済みユーザが「工事原価管理」をクリック → Factoryskills が KGK チケットを Redis
+# に発行 → KGK 側 callback でセッション確立 → KGK ダッシュボードへ自動到達する。
+# 環境変数で override 可: 例えば KGK の login 画面に直接飛ばしたい場合は
+# KGK_PORTAL_URL=http://localhost:3000/login を指定する (テスト目的等)。
+_KGK_PORTAL_URL = os.getenv("KGK_PORTAL_URL", "/sso/kgk/start")
 
 # ── 部署別ツール一覧 ────────────────────────────────────────
 # 新しいツールを追加する際は、該当部署の tools リストにエントリを追加するだけで OK。

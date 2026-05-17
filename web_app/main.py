@@ -20,7 +20,7 @@ from web_app.services.job_queue import restore_pending_jobs
 from web_app.services.cleanup import start_cleanup_scheduler
 from web_app.routers import (
     auth, portal, order_docs, construction_cost,
-    admin_users, qualifications, master, daika_link,
+    admin_users, qualifications, master, daika_link, sso,
 )
 
 logger = logging.getLogger("web_app")
@@ -220,6 +220,7 @@ app.include_router(admin_users.router)
 app.include_router(qualifications.router)
 app.include_router(master.router)
 app.include_router(daika_link.router)
+app.include_router(sso.router)
 
 
 # ── ヘルスチェック ────────────────────────────────────────────
