@@ -49,6 +49,18 @@ DEPARTMENTS = [
                 "url": "/construction-cost/",
                 "color": "success",
             },
+            # kouji-genka (KGK) アドオン — 別プロセスで稼働する独立 Web アプリへの導線。
+            # 認証/データは Factoryskills とは別建て (Phase 1)、入口だけ統合する方式。
+            # 詳細: skills/kouji-genka/docs/adr/ADR-001-addon-integration-strategy.md
+            {
+                "id": "kouji_genka",
+                "feature": "kouji_genka",
+                "name": "工事原価管理",
+                "description": "実行予算の編成・改定・承認ワークフロー、予算消化率ダッシュボードを提供します。",
+                "icon": "bi-graph-up-arrow",
+                "url": "/kgk/",
+                "color": "success",
+            },
         ],
     },
     {
