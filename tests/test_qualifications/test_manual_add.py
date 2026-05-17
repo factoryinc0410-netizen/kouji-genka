@@ -317,7 +317,7 @@ class TestManualAddSuccess:
                 "issued_on": "2024-04-01",
             },
         )
-        r = app_env["client"].get("/qualifications/")
+        r = app_env["client"].get("/qualifications/?status=all")
         assert r.status_code == 200
         assert "MA-INDEX-001" in r.text
         assert "索引表示テスト資格" in r.text

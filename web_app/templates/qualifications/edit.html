@@ -1,6 +1,29 @@
 {% extends "base.html" %}
 {% block title %}資格者証の編集 — Factoryskills{% endblock %}
 
+{% block head %}
+<style>
+  .edit-preview-frame {
+    width: 100%;
+    height: 480px;
+    min-height: 480px;   /* flex 親の影響で高さ 0 になる事故を防ぐ */
+    border: 1px solid #dee2e6;
+    border-radius: .375rem;
+    background: #fff;
+    display: block;
+  }
+  .edit-preview-img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    border: 1px solid #dee2e6;
+    border-radius: .375rem;
+    background: #fff;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="mb-3">
     <nav aria-label="breadcrumb">
@@ -30,29 +53,38 @@
                 <i class="bi bi-pencil me-1"></i>編集内容
             </div>
             <div class="card-body">
-                <form method="post" action="/qualifications/edit/{{ cert.cert_id }}" id="edit-form">
+                <form method="post" action="/qualifications/edit/{{ cert.cert_id }}" id="edit-form"
+                      enctype="multipart/form-data">
 
                     {# 作業員 #}
                     <div class="mb-3">
                         <label class="form-label">
                             作業員 <span class="text-danger">*</span>
                         </label>
-                        <select name="worker_id" class="form-select" required>
-                            <option value="">— 作業員を選択 —</option>
-                            {% set group = namespace(current=None) %}
-                            {% for w in workers %}
-                              {% if w.group_name != group.current %}
-                                {% if not loop.first %}</optgroup>{% endif %}
-                                <optgroup label="{{ w.group_name or '(所属なし)' }}">
-                                {% set group.current = w.group_name %}
-                              {% endif %}
-                              <option value="{{ w.worker_id }}"
-                                      {% if cert.worker_id == w.worker_id %}selected{% endif %}>
-                                  {{ w.worker_name }}
-                              </option>
-                            {% endfor %}
-                            {% if workers %}</optgroup>{% endif %}
-                        </select>
+                        <div class="input-group">
+                            <select name="worker_id" class="form-select" required>
+                                <option value="">— 作業員を選択 —</option>
+                                {% set group = namespace(current=None) %}
+                                {% for w in workers %}
+                                  {% if w.group_name != group.current %}
+                                    {% if not loop.first %}</optgroup>{% endif %}
+                                    <optgroup label="{{ w.group_name or '(所属なし)' }}">
+                                    {% set group.current = w.group_name %}
+                                  {% endif %}
+                                  <option value="{{ w.worker_id }}"
+                                          {% if cert.worker_id == w.worker_id %}selected{% endif %}>
+                                      {{ w.worker_name }}
+                                  </option>
+                                {% endfor %}
+                                {% if workers %}</optgroup>{% endif %}
+                            </select>
+                            <a href="/qualifications/staff"
+                               target="_blank" rel="noopener"
+                               class="btn btn-outline-success"
+                               title="新しい資格者を登録 (別タブで開きます)">
+                                <i class="bi bi-person-plus me-1"></i>新規登録
+                            </a>
+                        </div>
                     </div>
 
                     {# 資格名 #}
@@ -125,6 +157,22 @@
                                   placeholder="補足情報があれば記入">{{ cert.notes or '' }}</textarea>
                     </div>
 
+                    {# ファイル差し替え (任意) #}
+                    <div class="mb-3">
+                        <label class="form-label" for="cert-file-replace">
+                            <i class="bi bi-paperclip me-1"></i>原本ファイルの差し替え
+                            <small class="text-muted">(任意)</small>
+                        </label>
+                        <input type="file" id="cert-file-replace"
+                               name="file"
+                               class="form-control"
+                               accept=".pdf,.png,.jpg,.jpeg">
+                        <div class="form-text">
+                            ファイルを選択するとアップロードして既存の原本と差し替えます
+                            (未選択時は変更しません)。PDF / JPG / PNG 対応。
+                        </div>
+                    </div>
+
                     {# アクション #}
                     <div class="d-flex justify-content-end gap-2">
                         <a href="/qualifications/" class="btn btn-outline-secondary">
@@ -172,22 +220,59 @@
             </div>
             <div class="card-body p-2">
                 {% if original_files %}
-                <ul class="list-unstyled mb-0 small">
-                    {% for f in original_files %}
-                    <li class="mb-1">
-                        {% if f.url %}
-                        <a href="{{ f.url }}" target="_blank" rel="noopener">
-                            <i class="bi bi-paperclip me-1"></i>{{ f.name }}
-                            <i class="bi bi-box-arrow-up-right small ms-1"></i>
-                        </a>
-                        {% else %}
-                        <span class="text-muted">
+                {# f.url は ``/qualifications/files/<job>/<name>`` のサイトルート
+                   相対パス。``?download=false`` を明示付与して
+                   ``Content-Disposition: inline`` を必ず受け取り、画面が開いた
+                   瞬間にダウンロードダイアログが出る事故を防ぐ。 #}
+                {% for f in original_files %}
+                <div class="mb-3">
+                    {# ── フォールバック導線 (プレビュー枠の直上) ──
+                       埋め込み <embed>/<img> がブラウザ設定で機能しないときの
+                       常時表示の出口。日本語ファイル名でも target="_blank" で
+                       新規タブに展開すれば、内蔵 PDF Viewer / 画像表示が確実に
+                       動く。 #}
+                    {% if f.url %}
+                    <div class="mb-2 small d-flex justify-content-between align-items-center gap-1 flex-wrap">
+                        <span class="text-truncate" title="{{ f.name }}">
                             <i class="bi bi-paperclip me-1"></i>{{ f.name }}
                         </span>
+                        <a href="{{ f.url }}?download=false"
+                           target="_blank" rel="noopener"
+                           class="btn btn-sm btn-outline-primary">
+                            📄 別ウィンドウで開く
+                        </a>
+                    </div>
+                    {% endif %}
+
+                    {# プレビュー本体: 画像はそのまま、PDF は <embed>、欠損時はバッジ #}
+                    {% if f.url %}
+                        {% set _lower = f.name|lower %}
+                        {% if _lower.endswith('.pdf') %}
+                        {# PDF: <embed type="application/pdf"> で確実にブラウザ
+                           内蔵ビューアに渡す (iframe より相性が安定する) #}
+                        <embed src="{{ f.url }}?download=false"
+                               type="application/pdf"
+                               title="{{ f.name }}"
+                               class="edit-preview-frame">
+                        {% elif _lower.endswith('.jpg') or _lower.endswith('.jpeg')
+                                or _lower.endswith('.png') or _lower.endswith('.gif')
+                                or _lower.endswith('.webp') %}
+                        <img src="{{ f.url }}?download=false" alt="{{ f.name }}"
+                             class="edit-preview-img" loading="lazy">
+                        {% else %}
+                        <div class="text-muted small text-center py-3 border rounded">
+                            <i class="bi bi-file-earmark display-6 d-block mb-1"></i>
+                            プレビュー非対応の形式です
+                        </div>
                         {% endif %}
-                    </li>
-                    {% endfor %}
-                </ul>
+                    {% else %}
+                    <div class="alert alert-warning small mb-1 py-2">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        ファイルがサーバ上に存在しません (欠損)
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
                 {% else %}
                 <p class="text-muted small mb-0 p-2">
                     原本ファイルが紐づいていません。

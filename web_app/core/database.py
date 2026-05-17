@@ -28,6 +28,11 @@ async def init_db() -> None:
         await _migrate_add_column(db, "cc_sites", "initial_cumulative_cost", "REAL DEFAULT 0")
         await _migrate_add_column(db, "cc_sites", "is_active", "INTEGER NOT NULL DEFAULT 1")
         await _migrate_add_column(db, "cc_workers", "is_active", "INTEGER NOT NULL DEFAULT 1")
+        # 案 A: 「資格管理のみ」フラグ。日報側 SELECT で除外する。
+        await _migrate_add_column(
+            db, "cc_workers", "is_qualifications_only",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
         # users テーブル: 管理者画面向けの拡張カラム
         await _migrate_add_column(db, "users", "is_active", "INTEGER NOT NULL DEFAULT 1")
         await _migrate_add_column(db, "users", "must_change_password", "INTEGER NOT NULL DEFAULT 0")
@@ -48,9 +53,40 @@ async def init_db() -> None:
         await _migrate_relax_audit_operator_nullable(db)
         await _migrate_seed_groups(db)
         await _migrate_trim_group_names(db)
+        # 資格者マスタ (q_staff) 初期化: 既存 q_certificates が指している cc_workers
+        # は当然「資格管理対象」なので、自動で q_staff(source='imported') を生成する。
+        # 冪等: UNIQUE 制約により重複 INSERT は無視される (INSERT OR IGNORE)。
+        await _migrate_backfill_q_staff(db)
         await db.commit()
     finally:
         await db.close()
+
+
+async def _migrate_backfill_q_staff(db) -> None:
+    """既存の q_certificates が参照する作業員を q_staff へバックフィルする。
+
+    旧 DB (q_staff 導入前のもの) を引き継いで起動した時、既存資格データに
+    紐付いた作業員が ``/qualifications/staff`` 一覧から消えてしまうのを防ぐ。
+    UNIQUE 制約により再実行は no-op。
+    """
+    import logging
+    _log = logging.getLogger("web_app.database")
+    try:
+        cur = await db.execute(
+            """
+            INSERT OR IGNORE INTO q_staff (worker_id, is_active, source)
+            SELECT DISTINCT worker_id, 1, 'imported' FROM q_certificates
+            """
+        )
+        # rowcount は SQLite では成功した INSERT の数 (IGNORE で弾かれた分は含まない)
+        if cur.rowcount and cur.rowcount > 0:
+            _log.info(
+                "マイグレーション: q_staff バックフィル %d 件 (既存 q_certificates から)",
+                cur.rowcount,
+            )
+    except Exception:
+        # q_certificates がまだ存在しない (新規 DB) など — 静かに無視
+        pass
 
 
 async def _migrate_seed_groups(db) -> None:
@@ -255,6 +291,9 @@ CREATE TABLE IF NOT EXISTS cc_workers (
     night_rate    REAL    NOT NULL DEFAULT 0,
     transport     REAL    NOT NULL DEFAULT 0,
     is_active     INTEGER NOT NULL DEFAULT 1,
+    -- 1: 資格管理 (qualifications) のみで参照する人物。日報側 (construction_cost) の
+    --    集計・テンプレ生成等からは除外される (作業員マスタ画面では編集できる)。
+    is_qualifications_only INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -373,6 +412,29 @@ CREATE TABLE IF NOT EXISTS q_qualifications (
     display_order        INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at           TEXT
+);
+
+-- ========================================
+-- 資格者証管理: スタッフ・メンバーシップ表 (Option 1)
+-- 資格管理側で「資格者マスタ」として独立管理する集合。
+-- 物理的な人物データ (氏名/所属/...) は cc_workers に置いたまま、
+-- どの cc_workers 行が「資格管理対象」かを q_staff で表現する。
+-- source: 'native'   — /qualifications/staff の新規登録モーダル経由で作成
+--                      (cc_workers も同時に is_qualifications_only=1 で作る)
+--         'imported' — 既存の cc_workers から取り込まれたもの
+-- worker_id は UNIQUE。重複インポートは INSERT OR IGNORE / 再有効化で扱う。
+-- q_certificates.worker_id は引き続き cc_workers を直接参照する設計
+-- (このテーブルは membership/可視性の管理だけを行う)。
+-- ========================================
+CREATE TABLE IF NOT EXISTS q_staff (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    worker_id   INTEGER NOT NULL UNIQUE
+                REFERENCES cc_workers(worker_id) ON DELETE RESTRICT,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    source      TEXT    NOT NULL DEFAULT 'native'
+                CHECK (source IN ('native','imported')),
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 -- ========================================

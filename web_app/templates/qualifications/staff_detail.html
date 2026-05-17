@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+{% block title %}{{ staff.worker_name }} の保有資格 — 資格者証管理{% endblock %}
+
+{% block head %}
+<style>
+  /* コンパクト一覧テーブル: 行間を詰めつつアクセント色は保持 */
+  .cert-table { font-size: .92rem; }
+  .cert-table th { white-space: nowrap; background: #f8f9fa; }
+  .cert-table td { vertical-align: middle; }
+  /* 状態色: bucket 由来の table-* に加え左ボーダーで視線誘導 */
+  .cert-table tr.cert-row-expired { border-left: 4px solid var(--bs-danger); }
+  .cert-table tr.cert-row-urgent,
+  .cert-table tr.cert-row-soon    { border-left: 4px solid var(--bs-warning); }
+  .cert-table tr.cert-row-far     { border-left: 4px solid var(--bs-info); }
+  .cert-table tr.cert-row-safe,
+  .cert-table tr.cert-row-no_renewal { border-left: 4px solid transparent; }
+  /* 証跡セル: 複数ファイル時に縦並びになるが行高は最小限 */
+  .cert-files-cell .btn { padding: .15rem .4rem; }
+  .cert-files-cell .file-row + .file-row { margin-top: .15rem; }
+  .cert-files-cell .file-name {
+      max-width: 14rem; display: inline-block; vertical-align: middle;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* PDF iframe / 画像のモーダル内最大サイズ */
+  #filePreviewBody img,
+  #filePreviewBody iframe { max-width: 100%; max-height: 80vh; }
+  #filePreviewBody iframe { width: 100%; height: 80vh; border: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item active">{{ staff.worker_name }} の保有資格</li>
+        </ol>
+    </nav>
+</div>
+
+{% include "qualifications/_nav.html" %}
+
+<div class="mt-4"></div>
+
+{# ── 資格者情報カード ───────────────────────────────────── #}
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+            <div>
+                <h3 class="mb-1">
+                    <i class="bi bi-person-badge me-2 text-primary"></i>
+                    {{ staff.worker_name }}
+                </h3>
+                <div class="text-muted small">
+                    <i class="bi bi-people me-1"></i>{{ staff.group_name or '所属なし' }}
+                    {% if staff.role %}
+                    <span class="mx-2">·</span>
+                    <i class="bi bi-briefcase me-1"></i>{{ staff.role }}
+                    {% endif %}
+                    <span class="mx-2">·</span>
+                    {% if staff.staff_source == 'native' %}
+                    <span class="badge bg-info text-dark"
+                          title="資格管理側で新規登録された資格者">
+                        <i class="bi bi-person-plus me-1"></i>ネイティブ
+                    </span>
+                    {% else %}
+                    <span class="badge bg-light text-dark border"
+                          title="日報システムから取り込まれた資格者">
+                        <i class="bi bi-arrow-down-square me-1"></i>取込
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="text-end">
+                {% if not staff.staff_is_active %}
+                <span class="badge bg-secondary">資格者マスタで無効化済み</span>
+                {% endif %}
+                {% if not staff.cc_is_active %}
+                <span class="badge bg-warning text-dark">退職 (cc_workers)</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {# サマリ stat-cards #}
+        <div class="row g-2 mt-3">
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-2 small">
+                    <div class="text-muted"><i class="bi bi-list-ul me-1"></i>保有数</div>
+                    <div class="fs-4 fw-bold">{{ summary.total }}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border border-success border-opacity-50 rounded p-2 small">
+                    <div class="text-success"><i class="bi bi-check-circle-fill me-1"></i>有効</div>
+                    <div class="fs-4 fw-bold text-success">{{ summary.safe }}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border border-warning border-opacity-50 rounded p-2 small">
+                    <div class="text-warning"><i class="bi bi-exclamation-triangle-fill me-1"></i>期限近接</div>
+                    <div class="fs-4 fw-bold text-warning">{{ summary.warning }}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border border-danger border-opacity-50 rounded p-2 small">
+                    <div class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>期限切れ</div>
+                    <div class="fs-4 fw-bold text-danger">{{ summary.expired }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if not staff.staff_is_active %}
+<div class="alert alert-secondary d-flex align-items-center" role="alert">
+    <i class="bi bi-info-circle me-2"></i>
+    <div>
+        この資格者は現在 **資格者マスタで無効化済み** です。
+        過去の保有資格は閲覧できますが、新規資格者証の登録対象には出ません。
+        再有効化するには <a href="/qualifications/staff/import">資格者取込</a> から再登録してください。
+    </div>
+</div>
+{% endif %}
+
+{# ── 保有資格カード群 ───────────────────────────────────── #}
+{% if certificates|length == 0 %}
+<div class="card shadow-sm">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-inbox display-6 d-block mb-2"></i>
+        この資格者の保有資格はまだ登録されていません。
+        {% if has_perm(user, 'qualifications', 'manager') and staff.staff_is_active %}
+        <div class="mt-3 d-flex gap-2 justify-content-center">
+            <a href="/qualifications/upload" class="btn btn-primary btn-sm">
+                <i class="bi bi-cloud-arrow-up me-1"></i>アップロード
+            </a>
+            <a href="/qualifications/manual-add" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-plus-square me-1"></i>手動追加
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-sm cert-table mb-0 align-middle">
+            <thead>
+                <tr>
+                    <th scope="col" style="min-width: 7rem;">状態</th>
+                    <th scope="col" style="min-width: 14rem;">資格名</th>
+                    <th scope="col" class="d-none d-md-table-cell">交付番号</th>
+                    <th scope="col" class="d-none d-xl-table-cell">交付機関</th>
+                    <th scope="col" class="d-none d-lg-table-cell">交付日</th>
+                    <th scope="col">有効期限</th>
+                    <th scope="col" class="d-none d-md-table-cell">証跡</th>
+                    {% if has_perm(user, 'qualifications', 'manager') %}
+                    <th scope="col" class="text-end" style="min-width: 5rem;">操作</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in certificates %}
+                {# bucket → 行色 + 左ボーダー強調。
+                   table-danger / table-warning は行全体の背景に薄く色を載せ、
+                   border-* は既存テストの色クラス検出 (例: border-danger) を
+                   そのまま満たすために row-level に付与する。 #}
+                {% set row_state_class =
+                    'table-danger cert-row-expired border-danger' if c.bucket == 'expired'
+                    else ('table-warning cert-row-urgent border-warning' if c.bucket == 'urgent'
+                    else ('table-warning cert-row-soon border-warning'   if c.bucket == 'soon'
+                    else ('cert-row-far border-info'                     if c.bucket == 'far'
+                    else ('cert-row-no_renewal' if c.bucket == 'no_renewal'
+                    else 'cert-row-safe')))) %}
+                <tr class="{{ row_state_class }}">
+                    {# ── 状態 ── #}
+                    <td>
+                        {% if c.bucket == 'safe' %}
+                        <span class="badge bg-success"><i class="bi bi-check2 me-1"></i>有効</span>
+                        {% elif c.bucket == 'far' %}
+                        <span class="badge bg-info text-dark">残 180 日以内</span>
+                        {% elif c.bucket == 'soon' %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle me-1"></i>残 60 日以内</span>
+                        {% elif c.bucket == 'urgent' %}
+                        <span class="badge bg-warning"><i class="bi bi-exclamation-triangle-fill me-1"></i>残 30 日以内</span>
+                        {% elif c.bucket == 'expired' %}
+                        <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>期限切れ</span>
+                        {% else %}
+                        <span class="badge bg-secondary">更新不要</span>
+                        {% endif %}
+                    </td>
+
+                    {# ── 資格名 (+ category, 備考) ── #}
+                    <td>
+                        <div class="fw-semibold">{{ c.qual_name }}</div>
+                        {% if c.qual_category %}
+                        <span class="badge bg-light text-dark border small">{{ c.qual_category }}</span>
+                        {% endif %}
+                        {% if c.notes %}
+                        <div class="small text-muted text-truncate"
+                             style="max-width: 22rem;"
+                             title="{{ c.notes }}">
+                            <i class="bi bi-sticky me-1"></i>{{ c.notes }}
+                        </div>
+                        {% endif %}
+                        {# 狭い画面 (md 未満) では交付番号を資格名の下に折り畳んで表示 #}
+                        {% if c.certificate_no %}
+                        <div class="small text-muted d-md-none">
+                            <i class="bi bi-hash"></i>{{ c.certificate_no }}
+                        </div>
+                        {% endif %}
+                    </td>
+
+                    {# ── 交付番号 / 交付機関 / 交付日 (画面幅で出し分け) ── #}
+                    <td class="d-none d-md-table-cell small">{{ c.certificate_no or '—' }}</td>
+                    <td class="d-none d-xl-table-cell small">{{ c.issuer or '—' }}</td>
+                    <td class="d-none d-lg-table-cell small">{{ c.issued_on or '—' }}</td>
+
+                    {# ── 有効期限 ── #}
+                    <td class="small">{{ c.expires_on or '—' }}</td>
+
+                    {# ── 証跡ファイル ── #}
+                    <td class="cert-files-cell d-none d-md-table-cell">
+                        {% if c.original_files %}
+                        {% for f in c.original_files %}
+                        <div class="file-row d-flex align-items-center gap-1">
+                            {% if has_perm(user, 'qualifications', 'manager') and f.url %}
+                            {# manager: 目アイコン (モーダルプレビュー) +
+                               ダウンロードアイコン。ファイル名は省略しつつ title に full text。 #}
+                            <span class="small file-name text-muted" title="{{ f.name }}">
+                                <i class="bi bi-file-earmark-text me-1"></i>{{ f.name }}
+                            </span>
+                            <div class="btn-group btn-group-sm ms-auto" role="group">
+                                {# data-url にプレビュー専用 URL (?download=false) を埋め、
+                                   JS は ``getAttribute('data-url')`` をそのまま iframe.src に
+                                   入れる。サイトルート相対なのでブラウザは現在ページの
+                                   origin (scheme/host/port) で解決する。 #}
+                                <button type="button"
+                                        class="btn btn-outline-primary preview-trigger"
+                                        data-url="{{ f.url }}?download=false"
+                                        data-name="{{ f.name }}"
+                                        title="プレビュー">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <a href="{{ f.url }}?download=true"
+                                   download="{{ f.name }}"
+                                   class="btn btn-outline-secondary"
+                                   title="ダウンロード">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                            </div>
+                            {% elif has_perm(user, 'qualifications', 'manager') and f.exists is sameas false %}
+                            {# manager かつ物理ファイル欠損: 「(欠損)」バッジで表示しクリック不可。 #}
+                            <span class="badge bg-warning text-dark file-name"
+                                  title="このファイルはサーバ上に存在しません。再アップロードが必要です。">
+                                <i class="bi bi-exclamation-triangle me-1"></i>{{ f.name }}
+                                <span class="ms-1">(欠損)</span>
+                            </span>
+                            {% else %}
+                            {# general: ファイル名のみ (ファイル配信が manager 制限のため) #}
+                            <span class="badge bg-light text-dark border file-name"
+                                  title="ファイルプレビューは manager 権限が必要です">
+                                <i class="bi bi-file-earmark me-1"></i>{{ f.name }}
+                            </span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <span class="text-muted small">—</span>
+                        {% endif %}
+                    </td>
+
+                    {# ── 操作 (manager のみ) ── #}
+                    {% if has_perm(user, 'qualifications', 'manager') %}
+                    <td class="text-end">
+                        {% if c.status != 'archived' %}
+                        <div class="btn-group btn-group-sm" role="group">
+                            <a href="/qualifications/edit/{{ c.cert_id }}"
+                               class="btn btn-outline-primary"
+                               title="編集">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            {# 論理削除: status='archived' に倒す。物理ファイルは残るので
+                               復元 (restore) で元に戻せる。 #}
+                            <form method="post"
+                                  action="/qualifications/delete/{{ c.cert_id }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('「{{ c.qual_name }}」を削除します。本当に削除しますか？（後でアーカイブから復元できます）');">
+                                {# 削除後はこのスタッフの個票に戻る。サーバ側でホワイトリスト検証あり。 #}
+                                <input type="hidden" name="next"
+                                       value="/qualifications/staff/{{ staff.worker_id }}">
+                                <button type="submit" class="btn btn-outline-danger"
+                                        title="この資格者証をアーカイブ">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{# ── ファイルプレビュー用モーダル (manager のみ trigger ボタンが描画される) ── #}
+{% if has_perm(user, 'qualifications', 'manager') %}
+<div class="modal fade" id="filePreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="filePreviewTitle">
+                    <i class="bi bi-eye me-2"></i>プレビュー
+                </h5>
+                <a id="filePreviewOpen" href="#" target="_blank" rel="noopener"
+                   class="btn btn-sm btn-outline-secondary me-2"
+                   title="別タブで開く">
+                    <i class="bi bi-box-arrow-up-right"></i>
+                </a>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center" id="filePreviewBody">
+                <!-- 内容は JS で差し替え -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{# ════════════════════════════════════════════════════════════
+   block scripts: base.html では bootstrap.bundle.min.js のロード後に
+   呼び出されるため、ここに置けば window.bootstrap が確実に存在する。
+   ──────────────────────────────────────────────────────── #}
+{% block scripts %}
+{% if has_perm(user, 'qualifications', 'manager') %}
+<script>
+(function () {
+    'use strict';
+
+    // ── 共通ヘルパ ──
+    function classifyFile(name) {
+        const lower = (name || '').toLowerCase();
+        return {
+            isImage: /\.(jpe?g|png|gif|webp)$/.test(lower),
+            isPdf:   lower.endsWith('.pdf'),
+        };
+    }
+
+    function escapeHtml(s) {
+        return String(s || '').replace(/[<>&"']/g, function (ch) {
+            return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch];
+        });
+    }
+
+    // ── モーダルプレビュー (遅延初期化) ──
+    // bootstrap がロード済みかつ、モーダルテンプレが DOM にある場合のみ機能。
+    let _modalInstance = null;
+    function getModal() {
+        if (_modalInstance) return _modalInstance;
+        const el = document.getElementById('filePreviewModal');
+        if (!el || !window.bootstrap) return null;
+        _modalInstance = bootstrap.Modal.getOrCreateInstance(el);
+        // メモリ解放: 閉じたら body をクリア (再生中の PDF/画像を停止)
+        el.addEventListener('hidden.bs.modal', function () {
+            const body = document.getElementById('filePreviewBody');
+            if (body) body.innerHTML = '';
+        });
+        return _modalInstance;
+    }
+
+    function previewBodyFor(url, name) {
+        const k = classifyFile(name);
+        const safe = escapeHtml(name);
+        if (k.isImage) {
+            return '<img src="' + url + '" alt="' + safe + '" class="img-fluid d-block mx-auto">';
+        }
+        if (k.isPdf) {
+            return '<iframe src="' + url + '" title="' + safe + '"></iframe>';
+        }
+        return '<div class="text-muted py-4">このファイル形式はモーダル内プレビュー未対応です。' +
+               '<br><a href="' + url + '" target="_blank" rel="noopener">別タブで開く</a></div>';
+    }
+
+    function openPreview(url, name) {
+        const modal = getModal();
+        const titleEl = document.getElementById('filePreviewTitle');
+        const bodyEl  = document.getElementById('filePreviewBody');
+        const openEl  = document.getElementById('filePreviewOpen');
+        if (!modal || !titleEl || !bodyEl || !openEl) {
+            // モーダルが使えない環境ではフォールバックとして別タブで直接開く
+            window.open(url, '_blank', 'noopener');
+            return;
+        }
+        titleEl.innerHTML = '<i class="bi bi-eye me-2"></i>' + escapeHtml(name || 'プレビュー');
+        openEl.href = url;
+        bodyEl.innerHTML = previewBodyFor(url, name || '');
+        modal.show();
+    }
+
+    // ── イベントデリゲーション ──
+    document.addEventListener('click', function (ev) {
+        const previewBtn = ev.target.closest('.preview-trigger');
+        if (previewBtn) {
+            ev.preventDefault();
+            openPreview(
+                previewBtn.getAttribute('data-url') || '',
+                previewBtn.getAttribute('data-name') || ''
+            );
+            return;
+        }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

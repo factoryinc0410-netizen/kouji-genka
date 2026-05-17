@@ -3,8 +3,11 @@
 現状は qualifications (q_qualifications) のみ管理する。将来的に
 cc_workers などの他マスタを追加する際もこの prefix (/master/...) に集約する。
 
-権限: すべて admin のみ。q_certificates から FK 参照されているため、
-物理削除は許容しない (is_active のトグルで論理無効化する)。
+権限 (RBAC): すべてのエンドポイントで ``RequirePermission("qualifications_master",
+"manager")`` を要求する (閲覧も編集も manager 限定)。``is_admin=True`` の
+ユーザーは ``has_permission`` のショートカットで素通し。
+q_certificates から FK 参照されているため、物理削除は許容しない
+(is_active のトグルで論理無効化する)。
 """
 from __future__ import annotations
 
@@ -14,12 +17,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from web_app.core.database import get_db
-from web_app.core.dependencies import require_admin
+from web_app.core.dependencies import RequirePermission
 from web_app.core.templates import templates as _templates
 
 logger = logging.getLogger("web_app.master")
 
 router = APIRouter(prefix="/master", tags=["master"])
+
+# RBAC: マスタは閲覧も編集も manager 限定 (general に開放しない)。
+# is_admin=True のユーザーは has_permission のショートカットで素通し。
+_RequireMasterManager = RequirePermission("qualifications_master", "manager")
 
 
 # ────────────────────────────────────────────
@@ -149,7 +156,7 @@ async def qualifications_index(
     q: str = "",
     category: str = "",
     include_inactive: int = 0,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireMasterManager),
 ):
     """資格マスタ一覧。admin のみ。
 
@@ -188,7 +195,7 @@ async def qualifications_index(
 @router.post("/qualifications/new")
 async def qualifications_create(
     request: Request,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireMasterManager),
 ):
     """新規マスタを作成する。
 
@@ -236,7 +243,7 @@ async def qualifications_create(
 async def qualifications_update(
     request: Request,
     qual_id: int,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_RequireMasterManager),
 ):
     """既存マスタを更新する。
 

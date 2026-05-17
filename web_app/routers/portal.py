@@ -33,6 +33,15 @@ DEPARTMENTS = [
                 "url": "/orders/",
                 "color": "primary",
             },
+            {
+                "id": "qualifications",
+                "feature": "qualifications",
+                "name": "資格者証管理",
+                "description": "作業員の資格者証を一元管理し、有効期限の近接 (180/60/30 日) を可視化します。",
+                "icon": "bi-patch-check",
+                "url": "/qualifications/",
+                "color": "primary",
+            },
         ],
     },
     {
@@ -47,6 +56,15 @@ DEPARTMENTS = [
                 "description": "工事日報から現場別原価管理表・個人別集計表を作成し、予算と累計を管理します。",
                 "icon": "bi-calculator",
                 "url": "/construction-cost/",
+                "color": "success",
+            },
+            {
+                "id": "daika_link",
+                "feature": "daika_link",
+                "name": "代価表リンク設定",
+                "description": "代価表 Excel の基準列に、同名の代価明細行（単/施/P/明 N 号）への内部ハイパーリンクを自動付与します。",
+                "icon": "bi-link-45deg",
+                "url": "/daika-link/",
                 "color": "success",
             },
             # kouji-genka (KGK) アドオン — 別プロセスで稼働する独立 Web アプリへの導線。
@@ -68,21 +86,6 @@ DEPARTMENTS = [
         "name": "建築部",
         "icon": "bi-house-door",
         "tools": [],
-    },
-    {
-        "id": "safety",
-        "name": "安全衛生",
-        "icon": "bi-shield-check",
-        "tools": [
-            {
-                "id": "qualifications",
-                "name": "資格者証管理",
-                "description": "作業員の資格者証を一元管理し、有効期限の近接 (180/60/30 日) を可視化します。",
-                "icon": "bi-patch-check",
-                "url": "/qualifications/",
-                "color": "primary",
-            },
-        ],
     },
 ]
 

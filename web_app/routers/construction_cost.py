@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from web_app.core.database import get_db
-from web_app.core.dependencies import RequirePermission
+from web_app.core.dependencies import RequirePermission, RequireAnyPermission
 from web_app.core.safe_files import safe_file_response
 from web_app.core.templates import templates as _templates
 
@@ -29,6 +29,15 @@ _FEATURE_KEY = "daily_report"
 # 同一インスタンスを参照することで一括差し替えできる。
 _RequireGeneral = RequirePermission(_FEATURE_KEY, "general")
 _RequireManager = RequirePermission(_FEATURE_KEY, "manager")
+
+# スタッフ (cc_workers) マスタは資格管理側からも編集する (資格管理専用フラグの操作含む)。
+# 「日報の manager」または「資格の manager」のいずれかがあれば操作許可する OR ガード。
+# /workers の 4 エンドポイント (page / add / update / delete) でのみ使用し、
+# 他の日報機能 (sites / monthly / aggregate 等) は厳格に daily_report.manager のままにする。
+_RequireWorkersManager = RequireAnyPermission([
+    (_FEATURE_KEY, "manager"),
+    ("qualifications", "manager"),
+])
 
 from skills.construction_cost.reader import read_daily_sheets, normalize_str
 from skills.construction_cost.aggregator import aggregate
@@ -62,8 +71,25 @@ async def _get_sites(db, active_only: bool = False) -> list[dict]:
     return [dict(r) for r in await cur.fetchall()]
 
 
-async def _get_workers(db, active_only: bool = False) -> list[dict]:
-    where = " WHERE w.is_active = 1" if active_only else ""
+async def _get_workers(
+    db,
+    active_only: bool = False,
+    exclude_qualifications_only: bool = False,
+) -> list[dict]:
+    """cc_workers を取得する。
+
+    - ``active_only``: True なら is_active=1 に絞る。
+    - ``exclude_qualifications_only``: True なら is_qualifications_only=0 に絞る。
+      日報の集計・テンプレ生成・候補ドロップダウン等、**日報の業務文脈**で呼ぶ
+      時はこちらを True にする。作業員マスタ画面 (この画面で当該フラグを
+      編集する) では False のまま全件取得する必要がある。
+    """
+    conds: list[str] = []
+    if active_only:
+        conds.append("w.is_active = 1")
+    if exclude_qualifications_only:
+        conds.append("w.is_qualifications_only = 0")
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
     sql = f"""
         SELECT w.*, COALESCE(g.display_order, 9999) AS group_display_order
         FROM cc_workers w
@@ -513,6 +539,76 @@ async def groups_add(
     )
 
 
+@router.post("/groups/{group_id}/delete")
+async def groups_delete(
+    request: Request,
+    group_id: int,
+    user: dict = Depends(_RequireManager),
+):
+    """グループを物理削除する。manager のみ。
+
+    安全策として、当該グループ名を参照している作業員 (cc_workers) または
+    現場予算 (cc_site_group_budgets) が 1 件でもあれば削除を拒否する。
+    （SQLite 側に FK 制約は無く join は group_name で解決するため、削除した
+    瞬間に整合性が壊れることは無いが、孤立データを生まないために事前に弾く）。
+    """
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT group_name FROM cc_groups WHERE group_id = ?", (group_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return RedirectResponse(
+                url="/construction-cost/groups?msg=該当グループが見つかりません&cat=warning",
+                status_code=303,
+            )
+        group_name = row["group_name"]
+
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM cc_workers WHERE TRIM(group_name) = TRIM(?)",
+            (group_name,),
+        )
+        worker_count = (await cur.fetchone())["c"]
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM cc_site_group_budgets WHERE TRIM(group_name) = TRIM(?)",
+            (group_name,),
+        )
+        budget_count = (await cur.fetchone())["c"]
+
+        if worker_count > 0 or budget_count > 0:
+            msg = quote(
+                f"「{group_name}」は使用中のため削除できません "
+                f"(作業員 {worker_count} 名・現場予算 {budget_count} 件)。"
+                f"先に作業員の所属変更や予算の整理を行ってください。"
+            )
+            return RedirectResponse(
+                url=f"/construction-cost/groups?msg={msg}&cat=warning",
+                status_code=303,
+            )
+
+        await db.execute("DELETE FROM cc_groups WHERE group_id = ?", (group_id,))
+        await db.commit()
+    except Exception:
+        ref = uuid.uuid4().hex[:8]
+        logger.exception("グループ削除エラー (ref=%s)", ref)
+        return RedirectResponse(
+            url=f"/construction-cost/groups?msg=削除に失敗しました（参照番号: {ref}）&cat=danger",
+            status_code=303,
+        )
+    finally:
+        await db.close()
+
+    logger.info(
+        "cc_groups 削除: group_id=%d name=%s by=%s",
+        group_id, group_name, user.get("username"),
+    )
+    return RedirectResponse(
+        url=f"/construction-cost/groups?msg={quote(f'「{group_name}」を削除しました')}&cat=success",
+        status_code=303,
+    )
+
+
 @router.post("/groups/update")
 async def groups_update(
     request: Request,
@@ -767,10 +863,24 @@ async def sites_delete(
 @router.get("/workers", response_class=HTMLResponse)
 async def workers_page(
     request: Request,
-    user: dict = Depends(_RequireManager),
+    user: dict = Depends(_RequireWorkersManager),
     msg: str = "",
     cat: str = "success",
+    from_: str = "",
 ):
+    """作業員単価マスタ画面。
+
+    ``from`` クエリパラメータ:
+      - ``qualifications``: 資格者証管理側からの遷移。パンくずや見出しを
+        資格コンテキストに合わせて出し分ける（業務的には同じ画面）。
+    """
+    # FastAPI 側で 'from' は予約語ぽくは無いがクエリ名としては安全のため
+    # 引数名は from_ に逃がし、Query エイリアスで受ける運用も可能だが、
+    # ここでは _nav.html 側で `?from=qualifications` リテラルを使うので
+    # request.query_params から直接読み取る。
+    src = request.query_params.get("from", "") or from_
+    came_from_qualifications = (src == "qualifications")
+
     db = await get_db()
     try:
         workers = await _get_workers(db, active_only=True)
@@ -779,13 +889,14 @@ async def workers_page(
         await db.close()
     return _templates.TemplateResponse(request, "construction_cost/workers.html", {
         "user": user, "workers": workers, "groups": groups, "msg": msg, "cat": cat,
+        "came_from_qualifications": came_from_qualifications,
     })
 
 
 @router.post("/workers/add")
 async def workers_add(
     request: Request,
-    user: dict = Depends(_RequireManager),
+    user: dict = Depends(_RequireWorkersManager),
     worker_name: str = Form(...),
     role: str = Form(""),
     group_name: str = Form(""),
@@ -793,14 +904,16 @@ async def workers_add(
     overtime_rate: float = Form(0),
     night_rate: float = Form(0),
     transport: float = Form(0),
+    is_qualifications_only: int = Form(0),
 ):
+    qual_only = 1 if is_qualifications_only else 0
     db = await get_db()
     try:
         try:
             await db.execute(
-                """INSERT INTO cc_workers (worker_name, role, group_name, daily_rate, overtime_rate, night_rate, transport)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (worker_name.strip(), role.strip(), group_name.strip() or None, daily_rate, overtime_rate, night_rate, transport),
+                """INSERT INTO cc_workers (worker_name, role, group_name, daily_rate, overtime_rate, night_rate, transport, is_qualifications_only)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (worker_name.strip(), role.strip(), group_name.strip() or None, daily_rate, overtime_rate, night_rate, transport, qual_only),
             )
             await db.commit()
         except Exception:
@@ -821,7 +934,7 @@ async def workers_add(
 @router.post("/workers/update")
 async def workers_update(
     request: Request,
-    user: dict = Depends(_RequireManager),
+    user: dict = Depends(_RequireWorkersManager),
     worker_id: int = Form(...),
     worker_name: str = Form(...),
     role: str = Form(""),
@@ -830,15 +943,17 @@ async def workers_update(
     overtime_rate: float = Form(0),
     night_rate: float = Form(0),
     transport: float = Form(0),
+    is_qualifications_only: int = Form(0),
 ):
+    qual_only = 1 if is_qualifications_only else 0
     db = await get_db()
     try:
         await db.execute(
             """UPDATE cc_workers
                SET worker_name=?, role=?, group_name=?, daily_rate=?, overtime_rate=?, night_rate=?,
-                   transport=?, updated_at=datetime('now','localtime')
+                   transport=?, is_qualifications_only=?, updated_at=datetime('now','localtime')
                WHERE worker_id=?""",
-            (worker_name.strip(), role.strip(), group_name.strip() or None, daily_rate, overtime_rate, night_rate, transport, worker_id),
+            (worker_name.strip(), role.strip(), group_name.strip() or None, daily_rate, overtime_rate, night_rate, transport, qual_only, worker_id),
         )
         await db.commit()
     finally:
@@ -852,7 +967,7 @@ async def workers_update(
 @router.post("/workers/delete")
 async def workers_delete(
     request: Request,
-    user: dict = Depends(_RequireManager),
+    user: dict = Depends(_RequireWorkersManager),
     worker_id: int = Form(...),
 ):
     db = await get_db()
@@ -895,7 +1010,10 @@ async def template_download(
     db = await get_db()
     try:
         sites = await _get_sites(db, active_only=True)
-        workers = await _get_workers(db, active_only=True)
+        # 日報テンプレに資格管理専用スタッフは出さない (案 A)
+        workers = await _get_workers(
+            db, active_only=True, exclude_qualifications_only=True,
+        )
     finally:
         await db.close()
 
@@ -951,7 +1069,10 @@ async def aggregate_run(
     db = await get_db()
     try:
         sites = await _get_sites(db, active_only=True)
-        workers = await _get_workers(db, active_only=True)
+        # 集計対象から資格管理専用スタッフを除外 (案 A)
+        workers = await _get_workers(
+            db, active_only=True, exclude_qualifications_only=True,
+        )
 
         # 各現場の cumulative を initial_cumulative_cost + 過去確定分で再計算
         for s in sites:

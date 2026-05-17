@@ -77,6 +77,15 @@ def app_env():
         "INSERT INTO cc_workers (worker_id, worker_name, group_name, is_active) "
         "VALUES (3, '鈴木一郎', 'A班', 1)"
     )
+    # q_staff (Option 1 メンバーシップ表) — テスト 3 ワーカーを資格者マスタに登録。
+    # _fetch_workers は q_staff.is_active=1 を条件にするため、これが無いと
+    # manual_add/edit/classify のドロップダウンが空になり既存テストが壊れる。
+    for wid in (1, 2, 3):
+        conn.execute(
+            "INSERT INTO q_staff (worker_id, is_active, source) "
+            "VALUES (?, 1, 'imported')",
+            (wid,),
+        )
     conn.commit()
     conn.close()
 

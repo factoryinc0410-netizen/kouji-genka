@@ -210,9 +210,16 @@ class TestWorkerViewCerts:
             expires_on=_today_offset(2000), cert_no="WV-FILE-001",
             original_files_json='["qualifications/manual_xyz/sample.pdf"]',
         )
-        r = app_env["client"].get("/qualifications/workers/1")
-        assert "/qualifications/files/manual_xyz/sample.pdf" in r.text
-        assert "sample.pdf" in r.text
+        # _parse_original_files は物理ファイル実体の存在も検証する
+        physical = app_env["staging_root"] / "manual_xyz" / "sample.pdf"
+        physical.parent.mkdir(parents=True, exist_ok=True)
+        physical.write_bytes(b"%PDF-1.4 dummy")
+        try:
+            r = app_env["client"].get("/qualifications/workers/1")
+            assert "/qualifications/files/manual_xyz/sample.pdf" in r.text
+            assert "sample.pdf" in r.text
+        finally:
+            physical.unlink(missing_ok=True)
 
 
 # ────────────────────────────────────────────
@@ -230,16 +237,23 @@ class TestWorkerViewErrors:
 # ────────────────────────────────────────────
 
 class TestIndexLink:
-    def test_index_links_to_worker_view(self, app_env):
-        """index.html の作業員名セルが /qualifications/workers/{id} を href に持つ。"""
+    def test_index_links_to_staff_detail(self, app_env):
+        """index.html の作業員名セルは Phase 5 から /qualifications/staff/{id} を指す。
+
+        旧 /workers/{id} は後方互換で残置するが、index からの導線は新 staff 個票に
+        移行した (test_staff_view.py::TestIndexLinkPointsToStaffDetail と対になる
+        テスト)。
+        """
         _seed_master(app_env["db_path"], qual_id=530, name="WV-INDEXLINK")
         _insert_cert(
             app_env["db_path"], cert_id=5301, worker_id=1, qual_id=530,
             expires_on=_today_offset(2000), cert_no="WV-LINK-001",
         )
-        r = app_env["client"].get("/qualifications/")
+        r = app_env["client"].get("/qualifications/?status=all")
         assert r.status_code == 200
         # cert が表示されている
         assert "WV-LINK-001" in r.text
-        # 作業員 1 へのリンクが含まれる
-        assert 'href="/qualifications/workers/1"' in r.text
+        # 作業員 1 へのリンクは Phase 5 で staff 個票に移行
+        assert 'href="/qualifications/staff/1"' in r.text
+        # 旧パスは index 描画には現れない
+        assert 'href="/qualifications/workers/1"' not in r.text

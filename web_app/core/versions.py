@@ -25,11 +25,13 @@ CORE_VERSION: str = "1.2.0-skill-version-registry"
 # ポータルの一覧・キャッシュバスティング・バッジ表示に反映される。
 from chat.version import CHAT_VERSION  # noqa: E402
 from skills.construction_cost.config import CONSTRUCTION_COST_VERSION  # noqa: E402
+from skills.daika_link_setting.config import DAIKA_LINK_SETTING_VERSION  # noqa: E402
 from skills.order_docs.config import ORDER_DOCS_VERSION  # noqa: E402
 
 SKILL_VERSIONS: dict[str, str] = {
     "order_docs": ORDER_DOCS_VERSION,
     "construction_cost": CONSTRUCTION_COST_VERSION,
+    "daika_link": DAIKA_LINK_SETTING_VERSION,
     "chat": CHAT_VERSION,
 }
 
@@ -38,6 +40,7 @@ SKILL_VERSIONS: dict[str, str] = {
 SKILL_DISPLAY_NAMES: dict[str, str] = {
     "order_docs": "注文書作成",
     "construction_cost": "工事日報集計",
+    "daika_link": "代価表リンク設定",
     "chat": "ファクトリーチャット",
     "core": "基盤",
 }

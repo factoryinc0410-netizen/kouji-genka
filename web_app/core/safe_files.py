@@ -9,9 +9,41 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import HTTPException, status
 from fastapi.responses import FileResponse
+
+
+def build_content_disposition(filename: str, disposition_type: str = "inline") -> str:
+    """RFC 5987 / RFC 6266 準拠の ``Content-Disposition`` 値を組み立てる。
+
+    日本語などの非 ASCII を含むファイル名でも、全主要ブラウザで正しく解釈される
+    よう **ASCII フォールバック** (``filename="..."``) と **UTF-8 エンコード版**
+    (``filename*=UTF-8''...``) の両方を出力する:
+
+        Content-Disposition: inline;
+            filename="_____.pdf";
+            filename*=UTF-8''%E8%B3%87%E6%A0%BC%E8%A8%BC.pdf
+
+    Starlette の FileResponse は片方しか出さないため、互換性確保のため
+    アプリ側で組み立ててこちらを優先させる。
+    """
+    # ASCII フォールバック: 非 ASCII は ``_`` に倒し、ダブルクォート / バックスラッシュ
+    # をエスケープしておく。これは古い IE / Safari など RFC 5987 を理解しない
+    # クライアント向けの保険。
+    ascii_fallback = "".join(
+        c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename
+    )
+    if not ascii_fallback.strip("_"):
+        ascii_fallback = "file"
+    # RFC 5987: UTF-8 でパーセントエンコード (safe="" → 何もスキップしない)
+    encoded = quote(filename, safe="")
+    return (
+        f'{disposition_type}; '
+        f'filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{encoded}"
+    )
 
 
 def _resolve_within(requested_path: str | Path, base_dir: Path) -> Path:
@@ -55,21 +87,40 @@ def safe_file_response(
     *,
     filename: str | None = None,
     media_type: str | None = None,
+    content_disposition_type: str = "attachment",
+    extra_headers: dict[str, str] | None = None,
 ) -> FileResponse:
     """base_dir の外を指していないことを検証してから FileResponse を返す。
 
     Args:
         requested_path: 返却したいファイルのパス（外部由来でよい）。
         base_dir: 許可するベースディレクトリ。
-        filename: ダウンロード時のファイル名。
+        filename: ダウンロード時のファイル名 (非 ASCII を含むなら自動で
+            ``filename=`` ASCII フォールバック + ``filename*=UTF-8''...`` の
+            両形式の Content-Disposition を組み立てる)。
         media_type: MIME タイプ。
+        content_disposition_type: ``"attachment"`` (既定: ダウンロード強制) /
+            ``"inline"`` (ブラウザでインライン表示)。
+        extra_headers: 追加でセットするレスポンスヘッダー (例: ``X-Frame-Options``)。
+            ``Content-Disposition`` を含めれば自動生成より優先される。
 
     Raises:
         HTTPException: パスが base_dir の外側を指す、または存在しない場合に 404。
     """
     target = _resolve_within(requested_path, base_dir)
+    headers: dict[str, str] = dict(extra_headers or {})
+    # filename がある場合は両形式の Content-Disposition を組み立て、
+    # extra_headers で明示されていない場合に限り上書きする。
+    if filename and "content-disposition" not in {k.lower() for k in headers}:
+        headers["content-disposition"] = build_content_disposition(
+            filename, content_disposition_type,
+        )
+    # FileResponse の自動 Content-Disposition 生成と二重に出ないよう、
+    # 自前で組み立てた場合は filename=None を渡す。
     return FileResponse(
         path=str(target),
-        filename=filename,
+        filename=None,
         media_type=media_type,
+        content_disposition_type=content_disposition_type,
+        headers=headers or None,
     )

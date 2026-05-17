@@ -7,10 +7,17 @@
   - DB の jobs レコード
   - DB の期限切れ sessions レコード
 を削除する。
+
+qualifications (資格者証管理) のファイルは ``uploads/qualifications/<job_id>/``
+配下に保存されるが、これは ``jobs`` テーブルとは別系統 (``q_upload_jobs`` /
+``q_certificates``) で管理されるため、注文書系のクリーンアップ対象から
+完全に除外する。専用の孤児検出は ``_cleanup_qualifications_orphans`` が担う。
 """
 import asyncio
+import json
 import logging
 import shutil
+import time
 from threading import Thread
 
 import aiosqlite
@@ -23,6 +30,17 @@ from web_app.core.config import (
     CLEANUP_INTERVAL,
     MAX_JOBS_PER_USER,
 )
+
+# ``UPLOAD_DIR`` 直下にあって注文書ジョブの ID ではない予約名。
+# 孤児検出のループで child.name がここに含まれていたら絶対に削除しない。
+# 資格者証管理 (qualifications) のファイル基幹ディレクトリを誤削除しないための
+# 防御で、これを外すと過去に発生した「ファイル一括欠損」事故が再発する。
+_RESERVED_UPLOAD_SUBDIRS: frozenset[str] = frozenset({"qualifications"})
+
+# qualifications 専用孤児検出の保持期間 (秒)。
+# 30 日経過し、かつ DB のどこからも参照されていない job_id ディレクトリのみ
+# 削除する。ユーザーが明示的に削除/確定するまでは原則保持する方針。
+_QUALIFICATIONS_ORPHAN_RETENTION_SECONDS: int = 30 * 24 * 60 * 60
 
 logger = logging.getLogger("web_app.cleanup")
 
@@ -78,16 +96,29 @@ async def _run_cleanup() -> None:
         # ── 3.5) 古い draft 集計データの削除（24時間以上放置されたもの） ──
         deleted_drafts = await _cleanup_stale_drafts(db)
 
-        # ── 4) 孤児ディレクトリの検出・削除 ──
+        # ── 4) 孤児ディレクトリの検出・削除 (注文書系) ──
         cleaned_orphans = await _cleanup_orphan_dirs(db)
+
+        # ── 5) qualifications 専用の孤児クリーンアップ ──
+        # q_upload_jobs / q_certificates のいずれからも参照されていない
+        # uploads/qualifications/<job_id>/ を 30 日経過後にだけ削除する。
+        cleaned_qualifications_orphans = await _cleanup_qualifications_orphans(db)
 
         total_jobs = deleted_excess + deleted_jobs
         if deleted_drafts:
             logger.info("古い draft 集計データ %d 件を削除しました", deleted_drafts)
-        if total_jobs or deleted_sessions or cleaned_orphans or deleted_drafts:
+        any_action = (
+            total_jobs or deleted_sessions or cleaned_orphans
+            or deleted_drafts or cleaned_qualifications_orphans
+        )
+        if any_action:
             logger.info(
-                "クリーンアップ完了: ジョブ %d 件削除（超過 %d + 期限切れ %d）, セッション %d 件削除, 孤児ディレクトリ %d 件削除",
-                total_jobs, deleted_excess, deleted_jobs, deleted_sessions, cleaned_orphans,
+                "クリーンアップ完了: ジョブ %d 件削除（超過 %d + 期限切れ %d）, "
+                "セッション %d 件削除, 孤児ディレクトリ %d 件削除, "
+                "資格者証孤児 %d 件削除",
+                total_jobs, deleted_excess, deleted_jobs,
+                deleted_sessions, cleaned_orphans,
+                cleaned_qualifications_orphans,
             )
         else:
             logger.debug("クリーンアップ: 削除対象なし")
@@ -194,7 +225,14 @@ async def _cleanup_stale_drafts(db: aiosqlite.Connection) -> int:
 
 
 async def _cleanup_orphan_dirs(db: aiosqlite.Connection) -> int:
-    """DB にレコードがないが uploads/ や outputs/ にディレクトリが残っている場合に削除する。"""
+    """注文書系の孤児ディレクトリを削除する。
+
+    ``jobs`` テーブルに存在しない ``UPLOAD_DIR/`` または ``OUTPUT_DIR/`` 直下の
+    サブディレクトリを削除する。**ただし** ``_RESERVED_UPLOAD_SUBDIRS`` に
+    含まれるサブディレクトリ (現状: ``qualifications``) は別系統の DB
+    (``q_upload_jobs`` / ``q_certificates``) で管理されており、ここで処理すると
+    全件を孤児と誤判定して丸ごと削除してしまうため、明示的にスキップする。
+    """
     count = 0
 
     for base_dir in (UPLOAD_DIR, OUTPUT_DIR):
@@ -204,7 +242,11 @@ async def _cleanup_orphan_dirs(db: aiosqlite.Connection) -> int:
             if not child.is_dir():
                 continue
             job_id = child.name
-            # DB にこの job_id が存在するか確認
+            # 予約サブディレクトリ (qualifications など) は別系統の管理対象。
+            # ここで rmtree すると過去の「資格者証ファイル一括欠損」事故が
+            # 再発するため、必ずスキップする。
+            if base_dir == UPLOAD_DIR and job_id in _RESERVED_UPLOAD_SUBDIRS:
+                continue
             cursor = await db.execute(
                 "SELECT COUNT(*) as cnt FROM jobs WHERE id = ?", (job_id,)
             )
@@ -213,5 +255,106 @@ async def _cleanup_orphan_dirs(db: aiosqlite.Connection) -> int:
                 shutil.rmtree(str(child), ignore_errors=True)
                 logger.info("孤児ディレクトリ削除: %s", child)
                 count += 1
+
+    return count
+
+
+async def _cleanup_qualifications_orphons_collect_referenced_jobs(
+    db: aiosqlite.Connection,
+) -> set[str]:
+    """``q_upload_jobs`` と ``q_certificates`` から参照中の job_id 集合を作る。
+
+    - ``q_upload_jobs.job_id`` は staging 中 (= 確定前) の参照
+    - ``q_certificates.original_files_json`` は確定済み資格者証から参照される
+      物理ファイルパス (例: ``qualifications/<job_id>/<file>.pdf``)。ここから
+      job_id 部を抽出して保持参照リストに加える
+    """
+    referenced: set[str] = set()
+
+    cursor = await db.execute("SELECT job_id FROM q_upload_jobs")
+    for row in await cursor.fetchall():
+        if row["job_id"]:
+            referenced.add(row["job_id"])
+
+    cursor = await db.execute(
+        "SELECT original_files_json FROM q_certificates "
+        "WHERE original_files_json IS NOT NULL AND original_files_json <> ''"
+    )
+    for row in await cursor.fetchall():
+        raw = row["original_files_json"]
+        try:
+            paths = json.loads(raw) or []
+        except (TypeError, ValueError):
+            logger.warning(
+                "q_certificates.original_files_json が JSON として解釈できません: %r",
+                raw[:120] if isinstance(raw, str) else raw,
+            )
+            continue
+        for path_str in paths:
+            # 形式は ``qualifications/<job_id>/<filename>``。
+            # 想定外の形でも壊れずに拾うため split で頑健にハンドルする。
+            if not isinstance(path_str, str):
+                continue
+            parts = path_str.replace("\\", "/").split("/")
+            if len(parts) >= 3 and parts[0] == "qualifications":
+                referenced.add(parts[1])
+
+    return referenced
+
+
+async def _cleanup_qualifications_orphans(db: aiosqlite.Connection) -> int:
+    """資格者証専用の孤児クリーンアップ。
+
+    削除対象の条件 (すべて満たした場合のみ):
+      1. ``uploads/qualifications/<job_id>/`` が物理ディレクトリとして存在
+      2. ``q_upload_jobs`` および ``q_certificates`` のどちらからも参照されない
+      3. ディレクトリの mtime が ``_QUALIFICATIONS_ORPHAN_RETENTION_SECONDS``
+         (デフォルト 30 日) より前
+
+    一定時間で勝手に消える従来挙動を是正し、ユーザーが明示的に確定/削除
+    するまで原則保持する方針に揃える。30 日のグレース期間は本当に到達不能
+    な孤児 (DB ロールバック中断などで発生) のみを対象とするための保険。
+    """
+    qualifications_root = UPLOAD_DIR / "qualifications"
+    if not qualifications_root.exists():
+        return 0
+
+    referenced = await _cleanup_qualifications_orphons_collect_referenced_jobs(db)
+
+    now = time.time()
+    cutoff = now - _QUALIFICATIONS_ORPHAN_RETENTION_SECONDS
+    count = 0
+
+    for child in qualifications_root.iterdir():
+        if not child.is_dir():
+            continue
+        job_id = child.name
+        if job_id in referenced:
+            continue
+        try:
+            mtime = child.stat().st_mtime
+        except OSError as exc:
+            logger.warning(
+                "qualifications 孤児候補の stat 失敗 path=%s err=%s", child, exc,
+            )
+            continue
+        if mtime > cutoff:
+            # まだ 30 日経っていない。確定途中・差し替え予定など、生きた
+            # ジョブの可能性があるので保持する。
+            continue
+        age_days = (now - mtime) / 86400
+        try:
+            shutil.rmtree(str(child), ignore_errors=False)
+        except OSError as exc:
+            logger.error(
+                "qualifications 孤児削除失敗 job_id=%s path=%s err=%s",
+                job_id, child, exc,
+            )
+            continue
+        logger.info(
+            "qualifications 孤児ディレクトリ削除: job_id=%s path=%s age_days=%.1f",
+            job_id, child, age_days,
+        )
+        count += 1
 
     return count

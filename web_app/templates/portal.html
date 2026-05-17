@@ -2,8 +2,103 @@
 
 {% block title %}ホーム - Factoryskills{% endblock %}
 
+{% block head %}
+<style>
+  /* ── ホーム画面 専用レイアウト (1画面フィット・部門 3 カラム横並び) ──
+     base.html の .main-content (margin-top:56px) と container-fluid.py-4 (48px)
+     の内側で 100vh から両者を引いた高さを占有し、内部だけスクロールする。 */
+  .fit-viewport-portal {
+    height: calc(100vh - 56px - 3rem - 1rem);  /* navbar + py-4 + 右下バッジ余裕 */
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow: hidden;
+  }
+  /* 固定高（自動）セクション */
+  .fit-viewport-portal > .page-header,
+  .fit-viewport-portal > .alert,
+  .fit-viewport-portal > .version-panel,
+  .fit-viewport-portal > .no-features-info { flex: 0 0 auto; }
+
+  /* 3 カラム横並びグリッド（メイン領域 — 残りスペースを占有） */
+  .fit-viewport-portal > .departments-grid {
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+  }
+
+  /* 各部門カラム — 縦並び・カード内のみ内部スクロール */
+  .fit-viewport-portal .department-section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    margin-bottom: 0 !important;
+  }
+  .fit-viewport-portal .department-header {
+    flex: 0 0 auto;
+    font-size: 1.05rem;
+    margin-bottom: 0.5rem !important;
+    padding-bottom: 0.35rem;
+  }
+  .fit-viewport-portal .dept-tools-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-right: 0.25rem;
+  }
+
+  /* 部門カラム内のツールカード（縦積み・幅一杯・コンパクト化） */
+  .fit-viewport-portal .dept-tools-scroll .card-body {
+    padding: 0.75rem 0.5rem;
+  }
+  .fit-viewport-portal .tool-icon-wrapper {
+    width: 48px;
+    height: 48px;
+    font-size: 1.3rem;
+    margin-bottom: 0.5rem !important;
+  }
+  .fit-viewport-portal .dept-tools-scroll .card-title {
+    font-size: 0.95rem;
+    margin-bottom: 0.25rem;
+  }
+  .fit-viewport-portal .dept-tools-scroll .card-text {
+    font-size: 0.78rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.35;
+  }
+  .fit-viewport-portal .dept-tools-scroll .btn {
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+  }
+
+  /* タイトル・アラート・バージョンパネルを圧縮 */
+  .fit-viewport-portal > .page-header { margin-bottom: 0 !important; }
+  .fit-viewport-portal > .page-header h2 { font-size: 1.4rem; margin-bottom: 0.1rem; }
+  .fit-viewport-portal > .page-header p  { font-size: 0.85rem; margin: 0; }
+  .fit-viewport-portal > .alert { margin-bottom: 0 !important; padding: 0.45rem 0.75rem; }
+  .fit-viewport-portal > .version-panel {
+    margin-top: 0 !important;
+    padding-top: 0.4rem !important;
+    border-top: 1px solid #dee2e6;
+    font-size: 0.72rem;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="mb-4">
+<div class="fit-viewport-portal">
+
+<div class="page-header">
     <h2><i class="bi bi-speedometer2 me-2"></i>ダッシュボード</h2>
     <p class="text-muted">利用するツールを選択してください。</p>
 </div>
@@ -13,7 +108,7 @@
    どちらか片方でも 0 件なら、その色のバッジは出さない。 #}
 {% set qa = qualification_alerts or {} %}
 {% if (qa.warning or 0) > 0 or (qa.expired or 0) > 0 %}
-<div class="alert alert-warning d-flex align-items-center mb-4 shadow-sm" role="alert">
+<div class="alert alert-warning d-flex align-items-center shadow-sm" role="alert">
     <i class="bi bi-exclamation-triangle-fill me-3 fs-3 text-warning"></i>
     <div class="flex-grow-1">
         <div class="fw-bold mb-1">資格者証の確認が必要です</div>
@@ -40,6 +135,7 @@
 {# 権限フィルタ: tool.id を feature_name とみなして general 以上の権限がある
    ツールだけを表示する。可視ツール 0 件かつ「Coming Soon」プレースホルダ
    の対象でもない部署はセクションごと非表示にする（空の見出しの羅列回避）。 #}
+<div class="departments-grid">
 {% for dept in departments %}
 {% set ns = namespace(visible_count=0) %}
 {% for tool in dept.tools %}
@@ -48,44 +144,40 @@
   {% endif %}
 {% endfor %}
 {% if ns.visible_count > 0 or dept.tools | length == 0 %}
-<div class="department-section mb-5">
-    <h4 class="department-header mb-3">
+<div class="department-section">
+    <h4 class="department-header">
         <i class="bi {{ dept.icon }} me-2"></i>{{ dept.name }}
     </h4>
 
-    <div class="row g-4">
+    <div class="dept-tools-scroll">
         {% for tool in dept.tools %}
         {% if has_perm(user, tool.feature, 'general') %}
-        <div class="col-md-6 col-lg-4">
-            <a href="{{ tool.url }}" class="text-decoration-none">
-                <div class="card tool-card h-100 shadow-sm border-0">
-                    <div class="card-body d-flex flex-column align-items-center text-center p-4">
-                        <div class="tool-icon-wrapper bg-{{ tool.color }} bg-opacity-10 mb-3">
-                            <i class="bi {{ tool.icon }} text-{{ tool.color }}"></i>
-                        </div>
-                        <h5 class="card-title text-dark">{{ tool.name }}</h5>
-                        <p class="card-text text-muted">{{ tool.description }}</p>
-                        <span class="btn btn-outline-{{ tool.color }} mt-auto">
-                            <i class="bi bi-arrow-right me-1"></i>開く
-                        </span>
+        <a href="{{ tool.url }}" class="text-decoration-none">
+            <div class="card tool-card shadow-sm border-0">
+                <div class="card-body d-flex flex-column align-items-center text-center">
+                    <div class="tool-icon-wrapper bg-{{ tool.color }} bg-opacity-10">
+                        <i class="bi {{ tool.icon }} text-{{ tool.color }}"></i>
                     </div>
+                    <h5 class="card-title text-dark">{{ tool.name }}</h5>
+                    <p class="card-text text-muted">{{ tool.description }}</p>
+                    <span class="btn btn-outline-{{ tool.color }} mt-auto">
+                        <i class="bi bi-arrow-right me-1"></i>開く
+                    </span>
                 </div>
-            </a>
-        </div>
+            </div>
+        </a>
         {% endif %}
         {% endfor %}
 
         {% if dept.tools | length == 0 %}
         <!-- ツール未登録の部署用プレースホルダー -->
-        <div class="col-md-6 col-lg-4">
-            <div class="card tool-card h-100 shadow-sm border-0 tool-placeholder">
-                <div class="card-body d-flex flex-column align-items-center text-center p-4">
-                    <div class="tool-icon-wrapper bg-secondary bg-opacity-10 mb-3">
-                        <i class="bi bi-plus-lg text-secondary"></i>
-                    </div>
-                    <h5 class="card-title text-muted">Coming Soon</h5>
-                    <p class="card-text text-muted">新しいツールを準備中です。</p>
+        <div class="card tool-card shadow-sm border-0 tool-placeholder">
+            <div class="card-body d-flex flex-column align-items-center text-center">
+                <div class="tool-icon-wrapper bg-secondary bg-opacity-10">
+                    <i class="bi bi-plus-lg text-secondary"></i>
                 </div>
+                <h5 class="card-title text-muted">Coming Soon</h5>
+                <p class="card-text text-muted">新しいツールを準備中です。</p>
             </div>
         </div>
         {% endif %}
@@ -93,30 +185,28 @@
 </div>
 {% endif %}
 {% endfor %}
+</div>{# /.departments-grid #}
 
 {# 全機能で権限なしのユーザーへの案内（管理者にもこれは出ないが、
    none ユーザーが空のホームを見て困らないよう導線を提示する） #}
 {% if not has_perm(user, 'order_docs', 'general')
    and not has_perm(user, 'daily_report', 'general') %}
-<div class="alert alert-info shadow-sm mt-3" role="alert">
+<div class="alert alert-info shadow-sm no-features-info" role="alert">
     <i class="bi bi-info-circle me-1"></i>
     現在、利用できる機能がありません。管理者にお問い合わせいただき、機能ごとの権限設定を依頼してください。
 </div>
 {% endif %}
 
 {# ──────── バージョン情報（ポータル専用フッター） ────────
-   基盤 (CORE) および各スキルのバージョンを一覧で表示する。
-   右下バッジとは別に、ポータルではフル情報を表示する。 #}
-<div class="version-panel mt-5 pt-3 border-top">
+   表示は単一行に集約（旧来は基盤＋スキル個別を列挙していたが、
+   情報量が多いため基盤バージョンのみに簡素化）。スキル個別バージョンは
+   引き続き右下バッジ（base.html）で、開いているスキルに応じて表示される。 #}
+<div class="version-panel">
     <small class="text-muted">
         <i class="bi bi-layers me-1"></i>
-        <strong>{{ skill_display_names.get('core', '基盤') }}:</strong>
-        v{{ core_version }}
-        {% for key, ver in skill_versions.items() %}
-            <span class="mx-2">|</span>
-            <strong>{{ skill_display_names.get(key, key) }}:</strong>
-            v{{ ver }}
-        {% endfor %}
+        Factoryskills v{{ core_version }}
     </small>
 </div>
+
+</div>{# /.fit-viewport-portal #}
 {% endblock %}

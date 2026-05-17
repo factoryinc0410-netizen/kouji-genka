@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {# CSRF トークン (AJAX 用): JS から
+       document.querySelector('meta[name="csrf-token"]').content で取り出し、
+       fetch() の X-CSRF-Token ヘッダーに乗せる。verify_csrf_token はヘッダー /
+       form の双方を受理する。未認証ページでは user 不在 → 空文字列。 #}
+    <meta name="csrf-token" content="{{ user.csrf_token if user and user.csrf_token else '' }}">
     <title>{% block title %}Factoryskills{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
@@ -23,49 +28,11 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
+                    {# 個別スキルへの導線はポータル (/) 上の部署別カードに集約する方針。
+                       ヘッダーには「ホーム」と「管理」のみを置き、スキル増加でメニューが
+                       肥大化するのを防ぐ。 #}
                     <li class="nav-item">
                         <a class="nav-link" href="/"><i class="bi bi-house-door me-1"></i>ホーム</a>
-                    </li>
-                    {% if has_perm(user, 'order_docs', 'general') %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/orders/"><i class="bi bi-file-earmark-pdf me-1"></i>注文書作成</a>
-                    </li>
-                    {% endif %}
-                    {% if has_perm(user, 'daily_report', 'general') %}
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-calculator me-1"></i>工事日報集計
-                        </a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="/construction-cost/"><i class="bi bi-speedometer2 me-2"></i>ダッシュボード</a></li>
-                            <li><a class="dropdown-item" href="/construction-cost/history"><i class="bi bi-clock-history me-2"></i>処理履歴</a></li>
-                            {% if has_perm(user, 'daily_report', 'manager') %}
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="/construction-cost/sites"><i class="bi bi-building me-2"></i>現場マスタ管理</a></li>
-                            <li><a class="dropdown-item" href="/construction-cost/workers"><i class="bi bi-people me-2"></i>作業員単価</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="/construction-cost/aggregate"><i class="bi bi-play-circle me-2"></i>集計処理</a></li>
-                            {% endif %}
-                        </ul>
-                    </li>
-                    {% endif %}
-                    {# ── 資格者証管理 (qualifications) ──
-                       今は全ログインユーザーに表示。RBAC 連携 (has_perm 化) は
-                       後続の「qualifications を RBAC 化」フェーズで対応する。 #}
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-patch-check me-1"></i>資格者証管理
-                        </a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="/qualifications/"><i class="bi bi-list-check me-2"></i>一覧</a></li>
-                            <li><a class="dropdown-item" href="/qualifications/pending"><i class="bi bi-hourglass-split me-2"></i>未確定</a></li>
-                            {% if user.is_admin %}
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="/qualifications/upload"><i class="bi bi-cloud-arrow-up me-2"></i>アップロード</a></li>
-                            <li><a class="dropdown-item" href="/qualifications/manual-add"><i class="bi bi-plus-square me-2"></i>手動追加</a></li>
-                            <li><a class="dropdown-item" href="/master/qualifications"><i class="bi bi-collection me-2"></i>資格マスタ</a></li>
-                            {% endif %}
-                        </ul>
                     </li>
                     {# ── 管理 (is_admin 限定) ── ユーザー管理画面 (RBAC) #}
                     {% if user.is_admin %}
@@ -98,20 +65,6 @@
     {% else %}
     <!-- 未ログイン時のコンテンツ（ログイン画面等） -->
     {% block content_noauth %}{% endblock %}
-    {% endif %}
-
-    <!-- アプリバージョン表示（右下・常時表示） -->
-    {# skill_key がルーターから渡されていればスキル名＋バージョン、
-       そうでなければ基盤 (CORE) バージョンを表示する。
-       詳細: web_app/core/versions.py / web_app/core/templates.py #}
-    {% if skill_key is defined and skill_key and skill_versions.get(skill_key) %}
-      <div class="app-version-badge" title="スキルバージョン">
-        {{ skill_display_names.get(skill_key, skill_key) }} v{{ skill_versions[skill_key] }}
-      </div>
-    {% else %}
-      <div class="app-version-badge" title="基盤バージョン">
-        {{ skill_display_names.get('core', '基盤') }} v{{ core_version }}
-      </div>
     {% endif %}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

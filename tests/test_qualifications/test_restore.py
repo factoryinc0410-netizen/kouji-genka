@@ -138,7 +138,7 @@ class TestRestoreSuccess:
             status="archived", cert_no=cert_no,
         )
         # アーカイブ中: デフォルト一覧には出ない
-        r1 = app_env["client"].get("/qualifications/")
+        r1 = app_env["client"].get("/qualifications/?status=all")
         assert cert_no not in r1.text
 
         # 復元
@@ -147,7 +147,7 @@ class TestRestoreSuccess:
         )
 
         # 復元後: デフォルト一覧に出る
-        r2 = app_env["client"].get("/qualifications/")
+        r2 = app_env["client"].get("/qualifications/?status=all")
         assert cert_no in r2.text
 
 
@@ -204,7 +204,7 @@ class TestIncludeArchivedFilter:
             app_env["db_path"], cert_id=320,
             status="archived", cert_no=cert_no,
         )
-        r = app_env["client"].get("/qualifications/")
+        r = app_env["client"].get("/qualifications/?status=all")
         assert r.status_code == 200
         assert cert_no not in r.text
 
@@ -214,14 +214,14 @@ class TestIncludeArchivedFilter:
             app_env["db_path"], cert_id=321,
             status="archived", cert_no=cert_no,
         )
-        r = app_env["client"].get("/qualifications/?include_archived=1")
+        r = app_env["client"].get("/qualifications/?status=all&include_archived=1")
         assert r.status_code == 200
         assert cert_no in r.text
 
     def test_archived_row_renders_restore_button(self, app_env):
         """archived 行には復元ボタン (form action="/<id>/restore") が出る。"""
         _insert_cert(app_env["db_path"], cert_id=322, status="archived")
-        r = app_env["client"].get("/qualifications/?include_archived=1")
+        r = app_env["client"].get("/qualifications/?status=all&include_archived=1")
         assert r.status_code == 200
         assert 'action="/qualifications/322/restore"' in r.text
         assert "bi-arrow-counterclockwise" in r.text
@@ -229,33 +229,29 @@ class TestIncludeArchivedFilter:
     def test_archived_row_hides_edit_and_delete_buttons(self, app_env):
         """archived 行には編集/削除ボタンを出さない (この cert に対してのみ判定)。"""
         _insert_cert(app_env["db_path"], cert_id=323, status="archived")
-        r = app_env["client"].get("/qualifications/?include_archived=1")
+        r = app_env["client"].get("/qualifications/?status=all&include_archived=1")
         assert "/qualifications/edit/323" not in r.text
         assert "/qualifications/delete/323" not in r.text
 
     def test_confirmed_row_keeps_edit_and_delete(self, app_env):
         """include_archived=1 でも confirmed 行は編集/削除を表示し続ける。"""
         _insert_cert(app_env["db_path"], cert_id=324, status="confirmed")
-        r = app_env["client"].get("/qualifications/?include_archived=1")
+        r = app_env["client"].get("/qualifications/?status=all&include_archived=1")
         assert "/qualifications/edit/324" in r.text
         assert "/qualifications/delete/324" in r.text
         # 復元ボタンはこの cert には出ない
         assert "/qualifications/324/restore" not in r.text
 
-    def test_filter_form_checkbox_state_persists(self, app_env):
-        """チェック状態が再描画後も維持される (UI 整合性)。"""
-        r_off = app_env["client"].get("/qualifications/")
-        # チェックされていない (checked 属性なし)
-        assert 'id="include-archived-switch"' in r_off.text
-        # 該当 input の周辺に "checked" が無いことを大まかに確認
-        idx = r_off.text.find('id="include-archived-switch"')
-        snippet_off = r_off.text[max(0, idx - 200):idx + 200]
-        assert "checked" not in snippet_off
+    def test_include_archived_query_param_still_routed(self, app_env):
+        """UI のチェックボックスは廃止したが、``?include_archived=1`` クエリは
+        引き続き router 側で受理し、archived も描画する (restore 後の再表示で利用)。"""
+        _insert_cert(app_env["db_path"], cert_id=327, status="archived")
+        r_off = app_env["client"].get("/qualifications/?status=all")
+        # クエリ無しでは archived 行は出ない
+        assert 'action="/qualifications/327/restore"' not in r_off.text
 
-        r_on = app_env["client"].get("/qualifications/?include_archived=1")
-        idx = r_on.text.find('id="include-archived-switch"')
-        snippet_on = r_on.text[max(0, idx - 200):idx + 200]
-        assert "checked" in snippet_on
+        r_on = app_env["client"].get("/qualifications/?status=all&include_archived=1")
+        assert 'action="/qualifications/327/restore"' in r_on.text
 
     def test_keyword_filter_combines_with_archived(self, app_env):
         """キーワード絞込 + include_archived の組合せで両方効く。"""

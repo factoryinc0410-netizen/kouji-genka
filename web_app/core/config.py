@@ -87,7 +87,10 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 # OCR 機能の ON/OFF。GEMINI_API_KEY 未設定時は実質無効。
 QUALIFICATIONS_OCR_ENABLED: bool = _env_bool("QUALIFICATIONS_OCR_ENABLED", True)
 # 1 ファイルあたり最大サイズ (MB)
-QUALIFICATIONS_MAX_FILE_MB: int = int(os.getenv("QUALIFICATIONS_MAX_FILE_MB", "20"))
+# クライアント側 (upload.html の Canvas リサイズ) で画像は 1920px × JPEG 品質0.8
+# まで自動圧縮されるため、実際の通信量は 1〜2MB 程度に収まる。サーバ側上限は
+# リサイズ前の素材 (スマホで撮った高解像度写真など) を許容するための余裕値。
+QUALIFICATIONS_MAX_FILE_MB: int = int(os.getenv("QUALIFICATIONS_MAX_FILE_MB", "50"))
 # 1 アップロードジョブで投入可能な最大ファイル数
 QUALIFICATIONS_MAX_FILES_PER_UPLOAD: int = int(
     os.getenv("QUALIFICATIONS_MAX_FILES_PER_UPLOAD", "5")

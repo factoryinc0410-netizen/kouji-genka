@@ -57,6 +57,24 @@ logger = logging.getLogger(__name__)
 #  ヘッダ / データ範囲の検出
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _has_fill(cell) -> bool:
+    """Excel セルに塗りつぶしパターンが設定されているか判定する（色は不問）。
+
+    openpyxl の Cell.fill.patternType は塗りつぶし無し時は ``None`` または
+    ``"none"`` になる。本関数はそれ以外の値（``"solid"``, ``"darkGray"`` 等）
+    を「塗りつぶしあり」とみなす。具体色は判定対象外。
+
+    Excel 未指定セルでも ``start_color.rgb`` には ``"00000000"`` のような
+    既定値が入ることがあるため、色文字列のチェックではなく ``patternType``
+    で判定する方が誤判定を避けられる。
+    """
+    try:
+        ptype = getattr(getattr(cell, "fill", None), "patternType", None)
+    except Exception:
+        return False
+    return ptype not in (None, "none", "")
+
+
 def _detect_header_end_row(ws: Worksheet, max_scan: int = 15) -> int:
     """内訳書の列ヘッダの最終行を検出する。
 
@@ -87,15 +105,46 @@ def _detect_data_end_row(
 
     「下請金額」「下請代金」行を探し、その行番号を返す。
     見つからなければ max_row をそのまま返す。
+
+    堅牢化のポイント:
+      - 「下請金額に含まれる労務費…」のような *注記文中* のキーワードに
+        誤マッチしないよう、A〜C 列のセル値が **完全一致または接頭辞**
+        として下記キーワードで始まる行のみを候補とする。
+        （注記文は通常「※」「【」で始まり、長文中に語が埋め込まれる）
+      - 候補が複数見つかった場合、H 列（当初金額）または K 列（変更金額）に
+        数値が入っている行を本物の下請金額行とみなして優先する。
+        値付きの候補が無ければ、見つかった候補のうち **最後の行** を採用する
+        （説明文より実際の小計行が下に来る前提）。
     """
+    candidates: list[int] = []                # キーワードに一致した全行
+    valued_candidates: list[int] = []         # かつ H/K 列に数値あり
     for row in range(start_row, max_row + 1):
+        matched = False
         for col in (1, 2, 3):
             val = _cell_str(ws, row, col)
             if val is None:
                 continue
             norm = _normalize(val)
-            if "下請金額" in norm or "下請代金" in norm:
-                return row
+            # 注記文中の埋め込み語に誤マッチしないため、接頭辞一致のみ採用。
+            # 例: 「下請金額」「下請代金」「下請金額計」は OK、
+            #     「下請金額に含まれる労務費及び…」は除外（接頭辞だが
+            #     最終的に valued_candidates 優先で実際の小計行が選ばれる）。
+            if norm.startswith("下請金額") or norm.startswith("下請代金"):
+                matched = True
+                break
+        if not matched:
+            continue
+        candidates.append(row)
+        # H 列 (col=8) または K 列 (col=11) に数値があれば「値付き候補」。
+        raw_h = _cell_raw(ws, row, 8)
+        raw_k = _cell_raw(ws, row, 11)
+        if isinstance(raw_h, (int, float)) or isinstance(raw_k, (int, float)):
+            valued_candidates.append(row)
+
+    if valued_candidates:
+        return valued_candidates[-1]
+    if candidates:
+        return candidates[-1]
     return max_row
 
 
@@ -505,8 +554,8 @@ def extract_nairaku_data(
         data_end = _detect_data_end_row(ws, data_start, max_row)
 
         logger.info(
-            "内訳書データ範囲: 行 %d 〜 %d (ヘッダ末尾: 行 %d)",
-            data_start, data_end, header_end,
+            "内訳書データ範囲: 行 %d 〜 %d (ヘッダ末尾: 行 %d, max_row=%d)",
+            data_start, data_end, header_end, max_row,
         )
 
         # ── 3) 注記セクションの終端（下請金額行の後 +20行まで） ──
@@ -534,171 +583,305 @@ def extract_nairaku_data(
         ):
             # 実 Excel 行番号（iter_rows は行を詰めずに返す）
             row_num = row_cells[0].row
+            # ── 1 行毎の防御的 try/except ────────────────────────
+            # 想定外のセル状態（型不整合・破損した結合・openpyxl の内部例外
+            # 等）で 1 行の処理が落ちても、後続の行抽出が止まらないように
+            # ループ本体全体を try で包む。失敗した行は spacer として
+            # レイアウトに残し、journalctl で当該行を特定できるよう
+            # logger.error に行番号と例外を出す。
+            try:
+                # ── セル塗りつぶし情報（A-O 列の 15 要素 bool 列）──
+                # 色そのものではなく「塗りつぶしが付いているか」だけを記録し、
+                # 以降の NairakuRow 構築で has_fills 引数として一括注入する。
+                # 実際の背景色は HTML 側 (.filled-cell) で config.NAIRAKU_FILL_COLOR
+                # を参照する単一指定とする。
+                _has_fills_15 = [_has_fill(c) for c in row_cells[:15]]
 
-            # ── フッター領域フラグ ──
-            # 下請金額行 (data_end) より下は「フッター領域」とみなす。
-            # この領域では Excel のレイアウトを厳密に保持するため、
-            # 非表示・装飾行スキップを適用しない（代わりに spacer として保持）。
-            # これにより「下請金額 → 注記行」間の空行数が PDF にもそのまま反映される。
-            in_footer_region = row_num > data_end
+                # ── フッター領域フラグ ──
+                # 下請金額行 (data_end) より下は「フッター領域」とみなす。
+                # この領域では Excel のレイアウトを厳密に保持するため、
+                # 非表示・装飾行スキップを適用しない（代わりに spacer として保持）。
+                # これにより「下請金額 → 注記行」間の空行数が PDF にもそのまま反映される。
+                in_footer_region = row_num > data_end
 
-            # 非表示行: 主表領域（data_end 以下）でのみスキップ
-            rd = ws.row_dimensions.get(row_num)
-            if rd and rd.hidden and not in_footer_region:
-                logger.debug("内訳書: 行 %d は非表示 → スキップ", row_num)
-                continue
+                # 非表示行: 主表領域（data_end 以下）でのみスキップ
+                rd = ws.row_dimensions.get(row_num)
+                if rd and rd.hidden and not in_footer_region:
+                    logger.debug("内訳書: 行 %d は非表示 → スキップ", row_num)
+                    continue
 
-            # 行高 0 相当の装飾行 (Excel 上で見えない区切り): 主表領域のみスキップ
-            # フッター領域では Excel 原本の行位置を 1:1 で PDF に反映させるため、
-            # 装飾行扱いでも spacer としてレイアウトに残す。
-            if (
-                rd and rd.height is not None and rd.height < 5.0
-                and not in_footer_region
-            ):
-                logger.debug(
-                    "内訳書: 行 %d は装飾行 (height=%.2fpt) → スキップ",
-                    row_num, rd.height,
+                # 行高 0 相当の装飾行 (Excel 上で見えない区切り): 主表領域のみスキップ
+                # フッター領域では Excel 原本の行位置を 1:1 で PDF に反映させるため、
+                # 装飾行扱いでも spacer としてレイアウトに残す。
+                if (
+                    rd and rd.height is not None and rd.height < 5.0
+                    and not in_footer_region
+                ):
+                    logger.debug(
+                        "内訳書: 行 %d は装飾行 (height=%.2fpt) → スキップ",
+                        row_num, rd.height,
+                    )
+                    continue
+
+                # ── 単一セル複合フッター終端の早期検出 ──
+                # 「【下請金額に含まれる労務費及び法定福利費（事業者負担分）について、
+                #   労務費、法定福利費】」のように 3 語すべてが 1 セルに含まれる
+                # パターン。検出したら当該行を note として出力し、即座に抽出を
+                # 打ち切る（以降の行を一切読まない）。
+                _probe_a = _cell_value_preserve(row_cells[0]) or ""
+                _probe_b = _cell_value_preserve(row_cells[1]) or ""
+                _probe_c = _cell_value_preserve(row_cells[2]) or ""
+                _probe_o = _cell_value_preserve(row_cells[14]) or ""
+                if _row_contains_composite_footer(_probe_a, _probe_b,
+                                                   _probe_c, _probe_o):
+                    footer_text = next(
+                        (t for t in (_probe_a, _probe_b, _probe_c, _probe_o)
+                         if t and _is_composite_footer_text(t)),
+                        _probe_a,
+                    )
+                    result.rows.append(NairakuRow(
+                        row_type="note",
+                        koji_shu=footer_text,
+                        # 複合フッターは A 列に全文を集約して描画するため、
+                        # B/C 相当の位置は空として疑似結合を判定する。
+                        col_spans=_resolve_col_spans(
+                            _merge_cache, row_num,
+                            val_a=footer_text, val_b=None, val_c=None,
+                        ),
+                        has_fills=_has_fills_15,
+                    ))
+                    _banner(
+                        "NAIRAKU-COMPOSITE-FOOTER",
+                        f"行 {row_num} で複合フッター終端を検知 → ループ終了 "
+                        f"(text={footer_text[:60]!r})",
+                    )
+                    break
+
+                # ── セル値を row_cells タプルから取得（ws.cell() は使わない） ──
+                # row_cells[i] は 0-indexed の Cell。A列=[0], B列=[1], … O列=[14]
+                cell_a = row_cells[0]
+                cell_b = row_cells[1]
+                cell_c = row_cells[2]
+                cell_d = row_cells[3]
+                cell_e = row_cells[4]
+                cell_f = row_cells[5]
+                cell_g = row_cells[6]
+                cell_h = row_cells[7]
+                cell_i = row_cells[8]
+                cell_j = row_cells[9]
+                cell_k = row_cells[10]
+                cell_l = row_cells[11]
+                cell_m = row_cells[12]
+                cell_n = row_cells[13]
+                cell_o = row_cells[14]
+
+                # A列: インデント判定のため raw → strip 前の値も保持
+                raw_a = cell_a.value
+                raw_a_str = str(raw_a).rstrip() if raw_a is not None else ""
+                val_a = raw_a_str if raw_a_str else None
+                a_indent = _count_indent(raw_a_str)
+
+                # テキスト列は空白保持版を使用（内訳書の意図的な余白を反映）
+                val_b = _cell_value_preserve(cell_b)   # B: 種別
+                val_c = _cell_value_preserve(cell_c)   # C: 細別・規格
+                val_d = _cell_value_strip(cell_d)      # D: 単位（空白保持不要）
+                val_e = _safe_float(cell_e.value)      # E: 元請契約数量
+                val_f = _safe_float(cell_f.value)      # F: 当初数量
+                val_g = _safe_float(cell_g.value)      # G: 当初単価
+                val_h = _safe_float(cell_h.value)      # H: 当初金額
+                val_i = _safe_float(cell_i.value)      # I: 変更数量
+                val_j = _safe_float(cell_j.value)      # J: 変更単価
+                val_k = _safe_float(cell_k.value)      # K: 変更金額
+                val_l = _safe_float(cell_l.value)      # L: 増減数量
+                val_m = _safe_float(cell_m.value)      # M: 増減単価
+                val_n = _safe_float(cell_n.value)      # N: 増減金額
+                val_o = _cell_value_preserve(cell_o)   # O: 備考
+
+                # ── 行レベル背景色の判定 ──
+                # A/B/C 列のいずれか（前後空白を除去）に「直接工事費計」が含まれる
+                # 場合、その行は端から端まで同色で塗る要件（横一列の強調表示）。
+                # 既定は [None] * 15（行レベル指定なし）。
+                _bg_colors_15: list[str | None] = [None] * 15
+                _a_strip = (val_a or "").strip()
+                _b_strip = (val_b or "").strip()
+                _c_strip = (val_c or "").strip()
+                if (
+                    "直接工事費計" in _a_strip
+                    or "直接工事費計" in _b_strip
+                    or "直接工事費計" in _c_strip
+                ):
+                    _bg_colors_15 = [config.NAIRAKU_FILL_COLOR] * 15
+
+                all_texts = [val_a, val_b, val_c, val_d, val_o]
+                all_nums = [val_e, val_f, val_g, val_h, val_i, val_j,
+                            val_k, val_l, val_m, val_n]
+
+                # ── 空行判定 (レイアウト保持ルール) ──
+                # テキスト 5 列 (A/B/C/D/O) がすべて None または空白のみ、かつ
+                # 数値 10 列 (E〜N) がすべて None または 0.0 の行は、Excel 原本の
+                # 「意図的な余白」または「完全未使用行」と見なし、spacer として 1 行保持する。
+                # 以前は完全 None 行を continue でスキップしていたが、その挙動は
+                # Excel の行位置関係を破壊するため撤廃した (確定事項: レイアウト非圧縮)。
+                is_blank_row = (
+                    all(v is None or (isinstance(v, str) and v.strip() == "")
+                        for v in all_texts)
+                    and all(v is None or v == 0.0 for v in all_nums)
                 )
-                continue
+                if is_blank_row:
+                    # spacer 行は全セル空のため動的疑似結合は発動しない。
+                    # Excel の結合情報だけを反映する。
+                    result.rows.append(NairakuRow(
+                        row_type="spacer",
+                        col_spans=_resolve_col_spans(_merge_cache, row_num),
+                        has_fills=_has_fills_15,
+                        bg_colors=_bg_colors_15,
+                    ))
+                    continue
 
-            # ── 単一セル複合フッター終端の早期検出 ──
-            # 「【下請金額に含まれる労務費及び法定福利費（事業者負担分）について、
-            #   労務費、法定福利費】」のように 3 語すべてが 1 セルに含まれる
-            # パターン。検出したら当該行を note として出力し、即座に抽出を
-            # 打ち切る（以降の行を一切読まない）。
-            _probe_a = _cell_value_preserve(row_cells[0]) or ""
-            _probe_b = _cell_value_preserve(row_cells[1]) or ""
-            _probe_c = _cell_value_preserve(row_cells[2]) or ""
-            _probe_o = _cell_value_preserve(row_cells[14]) or ""
-            if _row_contains_composite_footer(_probe_a, _probe_b,
-                                               _probe_c, _probe_o):
-                footer_text = next(
-                    (t for t in (_probe_a, _probe_b, _probe_c, _probe_o)
-                     if t and _is_composite_footer_text(t)),
-                    _probe_a,
-                )
-                result.rows.append(NairakuRow(
-                    row_type="note",
-                    koji_shu=footer_text,
-                    # 複合フッターは A 列に全文を集約して描画するため、
-                    # B/C 相当の位置は空として疑似結合を判定する。
-                    col_spans=_resolve_col_spans(
-                        _merge_cache, row_num,
-                        val_a=footer_text, val_b=None, val_c=None,
-                    ),
-                ))
-                _banner(
-                    "NAIRAKU-COMPOSITE-FOOTER",
-                    f"行 {row_num} で複合フッター終端を検知 → ループ終了 "
-                    f"(text={footer_text[:60]!r})",
-                )
-                break
+                # 変更列にデータがあるかチェック
+                if any(v is not None for v in [val_i, val_j, val_k, val_l, val_m, val_n]):
+                    has_henkou = True
 
-            # ── セル値を row_cells タプルから取得（ws.cell() は使わない） ──
-            # row_cells[i] は 0-indexed の Cell。A列=[0], B列=[1], … O列=[14]
-            cell_a = row_cells[0]
-            cell_b = row_cells[1]
-            cell_c = row_cells[2]
-            cell_d = row_cells[3]
-            cell_e = row_cells[4]
-            cell_f = row_cells[5]
-            cell_g = row_cells[6]
-            cell_h = row_cells[7]
-            cell_i = row_cells[8]
-            cell_j = row_cells[9]
-            cell_k = row_cells[10]
-            cell_l = row_cells[11]
-            cell_m = row_cells[12]
-            cell_n = row_cells[13]
-            cell_o = row_cells[14]
+                # ── 太字判定 ──
+                cell_font = ws.cell(row=row_num, column=1).font
+                is_bold = bool(cell_font and cell_font.bold)
+                # B列も確認（合計行は B列が太字の場合がある）
+                if not is_bold and val_b:
+                    cell_font_b = ws.cell(row=row_num, column=2).font
+                    is_bold = bool(cell_font_b and cell_font_b.bold)
 
-            # A列: インデント判定のため raw → strip 前の値も保持
-            raw_a = cell_a.value
-            raw_a_str = str(raw_a).rstrip() if raw_a is not None else ""
-            val_a = raw_a_str if raw_a_str else None
-            a_indent = _count_indent(raw_a_str)
+                # ── row_type の判定 ──
+                a_text = val_a or ""                # 表示用（空白保持）
+                a_text_stripped = a_text.strip()    # 判定用
 
-            # テキスト列は空白保持版を使用（内訳書の意図的な余白を反映）
-            val_b = _cell_value_preserve(cell_b)   # B: 種別
-            val_c = _cell_value_preserve(cell_c)   # C: 細別・規格
-            val_d = _cell_value_strip(cell_d)      # D: 単位（空白保持不要）
-            val_e = _safe_float(cell_e.value)      # E: 元請契約数量
-            val_f = _safe_float(cell_f.value)      # F: 当初数量
-            val_g = _safe_float(cell_g.value)      # G: 当初単価
-            val_h = _safe_float(cell_h.value)      # H: 当初金額
-            val_i = _safe_float(cell_i.value)      # I: 変更数量
-            val_j = _safe_float(cell_j.value)      # J: 変更単価
-            val_k = _safe_float(cell_k.value)      # K: 変更金額
-            val_l = _safe_float(cell_l.value)      # L: 増減数量
-            val_m = _safe_float(cell_m.value)      # M: 増減単価
-            val_n = _safe_float(cell_n.value)      # N: 増減金額
-            val_o = _cell_value_preserve(cell_o)   # O: 備考
+                # 注記・フッター行: 下請金額行より後
+                if row_num > data_end:
+                    # H/K/N 列いずれかに金額があれば「値付きフッター行」(footer_item):
+                    #   例: 「　労務費」「　法定福利費」— A列にラベル、
+                    #   H/K/N に当初/変更/増減の金額が入っている。これらは item と
+                    #   同じテーブル構造で描画する必要がある。
+                    # A列にテキストがあるだけの「純粋な注記文」(note):
+                    #   例: 「※下請金額に含まれる労務費及び法定福利費（事業者負担分）について」
+                    #   数値は無く、colspan=15 で一行描画する。
+                    has_numbers = any(
+                        v is not None for v in (val_e, val_f, val_g, val_h,
+                                                 val_i, val_j, val_k,
+                                                 val_l, val_m, val_n)
+                    )
+                    has_any_text = bool(a_text_stripped) or bool(val_b) or bool(val_c)
+                    if has_numbers and has_any_text:
+                        # 値付きフッター行 (労務費 / 法定福利費 等)
+                        # A/B/C 列は Excel と同じ値がレンダリングされるため、
+                        # そのまま疑似結合判定に渡す。
+                        nrow = NairakuRow(
+                            row_type="footer_item",
+                            indent=a_indent,
+                            koji_shu=a_text,              # 空白保持
+                            shubetsu=val_b or "",
+                            saibetsu=val_c or "",
+                            tani=val_d or "",
+                            motouke_suryo=val_e,
+                            suryo=val_f,
+                            tanka=val_g,
+                            kingaku=val_h,
+                            henkou_suryo=val_i,
+                            henkou_tanka=val_j,
+                            henkou_kingaku=val_k,
+                            zougen_suryo=val_l,
+                            zougen_tanka=val_m,
+                            zougen_kingaku=val_n,
+                            biko=val_o or "",
+                            is_bold=is_bold,
+                            col_spans=_resolve_col_spans(
+                                _merge_cache, row_num,
+                                val_a=val_a, val_b=val_b, val_c=val_c,
+                            ),
+                            has_fills=_has_fills_15,
+                            bg_colors=_bg_colors_15,
+                        )
+                        # has_henkou も footer_item の変更列から検出
+                        if any(v is not None for v in (val_i, val_j, val_k,
+                                                        val_l, val_m, val_n)):
+                            has_henkou = True
+                        result.rows.append(nrow)
+                        # ── フッター終端検知 ──
+                        if _is_footer_terminator(a_text_stripped) or \
+                           (val_b and _is_footer_terminator(val_b)):
+                            logger.info(
+                                "内訳書: 行 %d でフッター終端『法定福利費』を検知 → "
+                                "抽出ループを終了します",
+                                row_num,
+                            )
+                            break
+                        continue
+                    elif has_any_text:
+                        # 純粋な注記文 (※で始まる前置き文など)。
+                        # NairakuRow には saibetsu (C) を渡さないため、疑似結合
+                        # 判定でも val_c=None として「C は空」と見なす。
+                        nrow = NairakuRow(
+                            row_type="note",
+                            koji_shu=a_text,              # 空白保持
+                            shubetsu=val_b or "",
+                            biko=val_o or "",
+                            is_bold=is_bold,
+                            col_spans=_resolve_col_spans(
+                                _merge_cache, row_num,
+                                val_a=a_text, val_b=val_b, val_c=None,
+                            ),
+                            has_fills=_has_fills_15,
+                            bg_colors=_bg_colors_15,
+                        )
+                        result.rows.append(nrow)
+                        # 前置き文には ※ が含まれるため _is_footer_terminator は
+                        # False を返すが、念のため終端チェックは実施
+                        if _is_footer_terminator(a_text_stripped) or \
+                           (val_b and _is_footer_terminator(val_b)):
+                            logger.info(
+                                "内訳書: 行 %d でフッター終端『法定福利費』を検知 → "
+                                "抽出ループを終了します",
+                                row_num,
+                            )
+                            break
+                        continue
+                    # ── 数値もテキストも主要セルに無い行 ──
+                    # 下請金額と注記の間の空行等。Excel のレイアウトをそのまま
+                    # 反映するため spacer として保持する（以前は silent skip していた）。
+                    # 全セル空のため動的疑似結合は発動しない。
+                    result.rows.append(NairakuRow(
+                        row_type="spacer",
+                        col_spans=_resolve_col_spans(_merge_cache, row_num),
+                        has_fills=_has_fills_15,
+                        bg_colors=_bg_colors_15,
+                    ))
+                    continue
 
-            all_texts = [val_a, val_b, val_c, val_d, val_o]
-            all_nums = [val_e, val_f, val_g, val_h, val_i, val_j,
-                        val_k, val_l, val_m, val_n]
+                # 合計行: A〜C結合 or 合計キーワードを含む
+                # 「共通仮設費」「純工事費計」等のラベルが C 列に書かれている
+                # レイアウトにも対応するため、A/B に加えて C 列も判定する。
+                is_subtotal = False
+                subtotal_label = ""
+                if _is_subtotal_text(a_text_stripped):
+                    is_subtotal = True
+                    subtotal_label = a_text  # 空白保持
+                elif val_b and _is_subtotal_text(val_b.strip()):
+                    is_subtotal = True
+                    subtotal_label = val_b  # 空白保持
+                elif val_c and _is_subtotal_text(val_c.strip()):
+                    is_subtotal = True
+                    subtotal_label = val_c  # 空白保持
+                elif _is_merged_across_abc(ws, row_num):
+                    is_subtotal = True
+                    subtotal_label = a_text  # 空白保持
 
-            # ── 空行判定 (レイアウト保持ルール) ──
-            # テキスト 5 列 (A/B/C/D/O) がすべて None または空白のみ、かつ
-            # 数値 10 列 (E〜N) がすべて None または 0.0 の行は、Excel 原本の
-            # 「意図的な余白」または「完全未使用行」と見なし、spacer として 1 行保持する。
-            # 以前は完全 None 行を continue でスキップしていたが、その挙動は
-            # Excel の行位置関係を破壊するため撤廃した (確定事項: レイアウト非圧縮)。
-            is_blank_row = (
-                all(v is None or (isinstance(v, str) and v.strip() == "")
-                    for v in all_texts)
-                and all(v is None or v == 0.0 for v in all_nums)
-            )
-            if is_blank_row:
-                # spacer 行は全セル空のため動的疑似結合は発動しない。
-                # Excel の結合情報だけを反映する。
-                result.rows.append(NairakuRow(
-                    row_type="spacer",
-                    col_spans=_resolve_col_spans(_merge_cache, row_num),
-                ))
-                continue
-
-            # 変更列にデータがあるかチェック
-            if any(v is not None for v in [val_i, val_j, val_k, val_l, val_m, val_n]):
-                has_henkou = True
-
-            # ── 太字判定 ──
-            cell_font = ws.cell(row=row_num, column=1).font
-            is_bold = bool(cell_font and cell_font.bold)
-            # B列も確認（合計行は B列が太字の場合がある）
-            if not is_bold and val_b:
-                cell_font_b = ws.cell(row=row_num, column=2).font
-                is_bold = bool(cell_font_b and cell_font_b.bold)
-
-            # ── row_type の判定 ──
-            a_text = val_a or ""                # 表示用（空白保持）
-            a_text_stripped = a_text.strip()    # 判定用
-
-            # 注記・フッター行: 下請金額行より後
-            if row_num > data_end:
-                # H/K/N 列いずれかに金額があれば「値付きフッター行」(footer_item):
-                #   例: 「　労務費」「　法定福利費」— A列にラベル、
-                #   H/K/N に当初/変更/増減の金額が入っている。これらは item と
-                #   同じテーブル構造で描画する必要がある。
-                # A列にテキストがあるだけの「純粋な注記文」(note):
-                #   例: 「※下請金額に含まれる労務費及び法定福利費（事業者負担分）について」
-                #   数値は無く、colspan=15 で一行描画する。
-                has_numbers = any(
-                    v is not None for v in (val_e, val_f, val_g, val_h,
-                                             val_i, val_j, val_k,
-                                             val_l, val_m, val_n)
-                )
-                has_any_text = bool(a_text_stripped) or bool(val_b) or bool(val_c)
-                if has_numbers and has_any_text:
-                    # 値付きフッター行 (労務費 / 法定福利費 等)
-                    # A/B/C 列は Excel と同じ値がレンダリングされるため、
-                    # そのまま疑似結合判定に渡す。
+                if is_subtotal:
+                    # 疑似結合は「他の明細行と同じく」Excel の raw val_a/b/c で
+                    # 判定する。短いラベル（例:「直接工事費」）では閾値未満
+                    # として結合せず罫線を残し、Excel 側で A:C 結合が設定されて
+                    # いる場合は _compute_col_spans の除外条件で colspan=3 が
+                    # 反映される。
                     nrow = NairakuRow(
-                        row_type="footer_item",
-                        indent=a_indent,
-                        koji_shu=a_text,              # 空白保持
-                        shubetsu=val_b or "",
-                        saibetsu=val_c or "",
+                        row_type="subtotal",
+                        koji_shu=subtotal_label,
                         tani=val_d or "",
                         motouke_suryo=val_e,
                         suryo=val_f,
@@ -711,86 +894,61 @@ def extract_nairaku_data(
                         zougen_tanka=val_m,
                         zougen_kingaku=val_n,
                         biko=val_o or "",
+                        is_bold=True,  # 合計行は常に太字
+                        col_spans=_resolve_col_spans(
+                            _merge_cache, row_num,
+                            val_a=val_a, val_b=val_b, val_c=val_c,
+                        ),
+                        has_fills=_has_fills_15,
+                        bg_colors=_bg_colors_15,
+                    )
+                    result.rows.append(nrow)
+                    continue
+
+                # カテゴリ行: A列にテキストあり、B/C/D列が空、
+                # かつ F〜H列が空または 0（SUM数式が 0 を返すケース対応）
+                is_category = (
+                    a_text_stripped != ""
+                    and val_b is None
+                    and val_c is None
+                    and val_d is None
+                    and (val_f is None or val_f == 0.0)
+                    and (val_g is None or val_g == 0.0)
+                    and (val_h is None or val_h == 0.0)
+                )
+
+                if is_category:
+                    # 疑似結合は item 行と同じく Excel の raw val_a/b/c で判定。
+                    # 工種名が閾値以上なら自動で A:C 結合され、短い工種名では
+                    # 結合せず罫線が残る（短文での罫線消失を防止）。
+                    # なお category 検出時は val_b/val_c は常に None なので、
+                    # 実質的に val_a の長さだけが結合発動の分岐条件となる。
+                    nrow = NairakuRow(
+                        row_type="category",
+                        indent=a_indent,
+                        koji_shu=a_text,              # 空白保持
+                        motouke_suryo=val_e,
                         is_bold=is_bold,
                         col_spans=_resolve_col_spans(
                             _merge_cache, row_num,
                             val_a=val_a, val_b=val_b, val_c=val_c,
                         ),
-                    )
-                    # has_henkou も footer_item の変更列から検出
-                    if any(v is not None for v in (val_i, val_j, val_k,
-                                                    val_l, val_m, val_n)):
-                        has_henkou = True
-                    result.rows.append(nrow)
-                    # ── フッター終端検知 ──
-                    if _is_footer_terminator(a_text_stripped) or \
-                       (val_b and _is_footer_terminator(val_b)):
-                        logger.info(
-                            "内訳書: 行 %d でフッター終端『法定福利費』を検知 → "
-                            "抽出ループを終了します",
-                            row_num,
-                        )
-                        break
-                    continue
-                elif has_any_text:
-                    # 純粋な注記文 (※で始まる前置き文など)。
-                    # NairakuRow には saibetsu (C) を渡さないため、疑似結合
-                    # 判定でも val_c=None として「C は空」と見なす。
-                    nrow = NairakuRow(
-                        row_type="note",
-                        koji_shu=a_text,              # 空白保持
-                        shubetsu=val_b or "",
-                        biko=val_o or "",
-                        is_bold=is_bold,
-                        col_spans=_resolve_col_spans(
-                            _merge_cache, row_num,
-                            val_a=a_text, val_b=val_b, val_c=None,
-                        ),
+                        has_fills=_has_fills_15,
+                        bg_colors=_bg_colors_15,
                     )
                     result.rows.append(nrow)
-                    # 前置き文には ※ が含まれるため _is_footer_terminator は
-                    # False を返すが、念のため終端チェックは実施
-                    if _is_footer_terminator(a_text_stripped) or \
-                       (val_b and _is_footer_terminator(val_b)):
-                        logger.info(
-                            "内訳書: 行 %d でフッター終端『法定福利費』を検知 → "
-                            "抽出ループを終了します",
-                            row_num,
-                        )
-                        break
                     continue
-                # ── 数値もテキストも主要セルに無い行 ──
-                # 下請金額と注記の間の空行等。Excel のレイアウトをそのまま
-                # 反映するため spacer として保持する（以前は silent skip していた）。
-                # 全セル空のため動的疑似結合は発動しない。
-                result.rows.append(NairakuRow(
-                    row_type="spacer",
-                    col_spans=_resolve_col_spans(_merge_cache, row_num),
-                ))
-                continue
 
-            # 合計行: A〜C結合 or 合計キーワードを含む
-            is_subtotal = False
-            subtotal_label = ""
-            if _is_subtotal_text(a_text_stripped):
-                is_subtotal = True
-                subtotal_label = a_text  # 空白保持
-            elif val_b and _is_subtotal_text(val_b.strip()):
-                is_subtotal = True
-                subtotal_label = val_b  # 空白保持
-            elif _is_merged_across_abc(ws, row_num):
-                is_subtotal = True
-                subtotal_label = a_text  # 空白保持
-
-            if is_subtotal:
-                # 疑似結合は「他の明細行と同じく」Excel の raw val_a/b/c で
-                # 判定する。短いラベル（例:「直接工事費」）では閾値未満
-                # として結合せず罫線を残し、Excel 側で A:C 結合が設定されて
-                # いる場合は _compute_col_spans の除外条件で colspan=3 が
-                # 反映される。
+                # 明細行（デフォルト）
+                # Excel の A/B/C をそのまま疑似結合判定に渡す。長い工種名に
+                # B/C が追随していないケースでルール (a)/(b)/(c) が発動して
+                # 結合として描画される。
                 nrow = NairakuRow(
-                    row_type="subtotal",
-                    koji_shu=subtotal_label,
+                    row_type="item",
+                    indent=a_indent,
+                    koji_shu=a_text,                  # 空白保持
+                    shubetsu=val_b or "",
+                    saibetsu=val_c or "",
                     tani=val_d or "",
                     motouke_suryo=val_e,
                     suryo=val_f,
@@ -803,77 +961,25 @@ def extract_nairaku_data(
                     zougen_tanka=val_m,
                     zougen_kingaku=val_n,
                     biko=val_o or "",
-                    is_bold=True,  # 合計行は常に太字
-                    col_spans=_resolve_col_spans(
-                        _merge_cache, row_num,
-                        val_a=val_a, val_b=val_b, val_c=val_c,
-                    ),
-                )
-                result.rows.append(nrow)
-                continue
-
-            # カテゴリ行: A列にテキストあり、B/C/D列が空、
-            # かつ F〜H列が空または 0（SUM数式が 0 を返すケース対応）
-            is_category = (
-                a_text_stripped != ""
-                and val_b is None
-                and val_c is None
-                and val_d is None
-                and (val_f is None or val_f == 0.0)
-                and (val_g is None or val_g == 0.0)
-                and (val_h is None or val_h == 0.0)
-            )
-
-            if is_category:
-                # 疑似結合は item 行と同じく Excel の raw val_a/b/c で判定。
-                # 工種名が閾値以上なら自動で A:C 結合され、短い工種名では
-                # 結合せず罫線が残る（短文での罫線消失を防止）。
-                # なお category 検出時は val_b/val_c は常に None なので、
-                # 実質的に val_a の長さだけが結合発動の分岐条件となる。
-                nrow = NairakuRow(
-                    row_type="category",
-                    indent=a_indent,
-                    koji_shu=a_text,              # 空白保持
-                    motouke_suryo=val_e,
                     is_bold=is_bold,
                     col_spans=_resolve_col_spans(
                         _merge_cache, row_num,
                         val_a=val_a, val_b=val_b, val_c=val_c,
                     ),
+                    has_fills=_has_fills_15,
+                    bg_colors=_bg_colors_15,
                 )
                 result.rows.append(nrow)
+
+            except Exception as _row_exc:
+                # 1 行の処理失敗が後続行の抽出を止めないよう、ここで握り潰す。
+                # レイアウトを崩さないため spacer を 1 行積む。
+                logger.error(
+                    "内訳書: 行 %d の処理で例外 — spacer 化して継続: %s",
+                    row_num, _row_exc, exc_info=True,
+                )
+                result.rows.append(NairakuRow(row_type="spacer"))
                 continue
-
-            # 明細行（デフォルト）
-            # Excel の A/B/C をそのまま疑似結合判定に渡す。長い工種名に
-            # B/C が追随していないケースでルール (a)/(b)/(c) が発動して
-            # 結合として描画される。
-            nrow = NairakuRow(
-                row_type="item",
-                indent=a_indent,
-                koji_shu=a_text,                  # 空白保持
-                shubetsu=val_b or "",
-                saibetsu=val_c or "",
-                tani=val_d or "",
-                motouke_suryo=val_e,
-                suryo=val_f,
-                tanka=val_g,
-                kingaku=val_h,
-                henkou_suryo=val_i,
-                henkou_tanka=val_j,
-                henkou_kingaku=val_k,
-                zougen_suryo=val_l,
-                zougen_tanka=val_m,
-                zougen_kingaku=val_n,
-                biko=val_o or "",
-                is_bold=is_bold,
-                col_spans=_resolve_col_spans(
-                    _merge_cache, row_num,
-                    val_a=val_a, val_b=val_b, val_c=val_c,
-                ),
-            )
-            result.rows.append(nrow)
-
         result.has_henkou = has_henkou
 
         # ── ページパディングは廃止（動的行数）──

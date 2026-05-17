@@ -2,26 +2,37 @@
 {% block title %}OCR 結果の確認・修正 — 資格者証管理{% endblock %}
 
 {# ─────────────────────────────────────────────────────────────────
-   左右ペインの独立スクロール用スタイル。
-   - 左ペイン (プレビュー): max-height = ビューポート、内部だけ縦スクロール
-   - 右ペイン (フォーム): 同様
-   - モバイル (md 未満) では分割を解除して縦並びに切り替える
+   2 カラム構成のスタイル。
+   - 左カラム (プレビュー): lg 以上では sticky でビューポート上端に固定、
+     内部だけ縦スクロールさせて右側フォームの高さに左右されないようにする
+   - 右カラム (フォーム): 通常のページスクロールに乗せる
+   - モバイル (lg 未満) では sticky を解除し縦並びで上→下に積む
    ───────────────────────────────────────────────────────────────── #}
 {% block head %}
 <style>
-  /* base.html の navbar (fixed-top) 高さ + container padding を引いた値 */
-  .classify-pane {
-    max-height: calc(100vh - 180px);
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
+  /* 左ペイン: lg+ で sticky 表示、ビューポート上端に固定して
+     右側フォームをスクロールしている間も原本がずっと見える */
   .classify-pane.preview-pane {
     background: #f8f9fa;
+    border: 1px solid #dee2e6;
     border-radius: .5rem;
     padding: 1rem;
   }
+  @media (min-width: 992px) {
+    .classify-pane.preview-pane {
+      position: sticky;
+      top: 80px;       /* base.html navbar 高さ分 */
+      max-height: calc(100vh - 100px);
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+  }
+  /* 右ペイン: 通常のページフローでスクロール */
   .classify-pane.form-pane {
-    padding-right: .5rem;  /* スクロールバー干渉回避 */
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    padding: 1rem;
   }
   /* PDF/画像プレビューのカード */
   .preview-item {
@@ -37,10 +48,14 @@
     display: block;
     margin: 0 auto;
   }
-  .preview-item iframe {
+  .preview-item iframe,
+  .preview-item embed {
     width: 100%;
     height: 600px;
+    min-height: 600px;   /* flex 親の影響で高さ 0 になる事故を防ぐ */
     border: 0;
+    display: block;
+    background: #fff;
   }
   .preview-item .filename {
     font-size: .875rem;
@@ -51,13 +66,6 @@
   /* 各候補フォームをカードで囲み区別をつける */
   .candidate-card {
     border-left: 4px solid #0d6efd;
-  }
-  /* モバイルでは独立スクロールを解除 (長いと操作しにくいため) */
-  @media (max-width: 767.98px) {
-    .classify-pane {
-      max-height: none;
-      overflow: visible;
-    }
   }
 </style>
 {% endblock %}
@@ -98,8 +106,8 @@
 </div>
 
 <div class="row g-3">
-    {# ── 左ペイン: ファイルプレビュー ─────────────────────────── #}
-    <div class="col-md-6">
+    {# ── 左カラム: ファイルプレビュー (lg 以上で sticky) ──────── #}
+    <div class="col-12 col-lg-6">
         <div class="classify-pane preview-pane">
             <h5 class="mb-3">
                 <i class="bi bi-files me-1"></i>原本ファイル
@@ -113,34 +121,72 @@
             </div>
             {% endif %}
 
+            {# f.url は ``/qualifications/files/<job>/<name>`` のサイトルート
+               相対パス。ブラウザが現在のページ origin (scheme/host/port) で
+               解決するので、iframe / img / リンクが port を取りこぼす事故は
+               起きない。``?download=false`` を明示付与して
+               ``Content-Disposition: inline`` を必ず受け取り、画面が開いた瞬間に
+               保存ダイアログが出る事故も防ぐ。 #}
             {% for f in files %}
             <div class="preview-item">
+                {# ── フォールバック導線 ──
+                   ブラウザのセキュリティ設定 (PDF プラグイン無効・iframe ブロック等)
+                   で埋め込み表示が機能しないとき向け。プレビュー枠の **直上** に
+                   常時出すことで、ユーザーが必ず内容を確認できる出口を確保する。 #}
+                <div class="mb-2 small">
+                    <a href="{{ f.url }}?download=false"
+                       target="_blank" rel="noopener"
+                       class="btn btn-sm btn-outline-primary">
+                        📄 別ウィンドウで開く
+                    </a>
+                    <span class="text-muted ms-2" title="{{ f.name }}">
+                        <i class="bi bi-paperclip me-1"></i>{{ f.name }}
+                    </span>
+                </div>
+
                 {% if f.is_image %}
-                <img src="{{ f.url }}" alt="{{ f.name }}" loading="lazy">
+                <img src="{{ f.url }}?download=false" alt="{{ f.name }}" loading="lazy">
                 {% elif f.is_pdf %}
-                <iframe src="{{ f.url }}" title="{{ f.name }}" loading="lazy"></iframe>
+                {# PDF は <embed type="application/pdf"> を使う:
+                   - <iframe> でも表示できるが、ブラウザの PDF Viewer 拡張との
+                     相性は <embed> + 明示 type 指定が一番安定する。
+                   - サイトルート相対 URL + ?download=false で
+                     Content-Disposition: inline を必ず受け取る。 #}
+                <embed src="{{ f.url }}?download=false"
+                       type="application/pdf"
+                       title="{{ f.name }}">
                 {% else %}
                 <div class="text-center py-3">
                     <i class="bi bi-file-earmark display-6 text-muted"></i>
                     <div class="small text-muted mt-2">プレビュー非対応の形式</div>
                 </div>
                 {% endif %}
-                <div class="filename">
-                    <i class="bi bi-paperclip me-1"></i>{{ f.name }}
-                    <a href="{{ f.url }}" target="_blank" rel="noopener" class="ms-2 small">
-                        <i class="bi bi-box-arrow-up-right"></i> 別タブで開く
-                    </a>
-                </div>
             </div>
             {% endfor %}
         </div>
     </div>
 
-    {# ── 右ペイン: 編集フォーム ───────────────────────────────── #}
-    <div class="col-md-6">
+    {# ── 右カラム: 抽出結果の確認・修正フォーム ────────────────── #}
+    <div class="col-12 col-lg-6">
         <div class="classify-pane form-pane">
             <form method="post" action="/qualifications/classify/{{ job.job_id }}" id="classify-form">
                 <input type="hidden" name="n_candidates" value="{{ candidates|length }}">
+
+                {# 候補が複数ある時、各ドロップダウン横にボタンを置くと煩雑なので
+                   フォーム冒頭に 1 個だけ置く。別タブ遷移してマスタで登録 → 戻ってリロード。 #}
+                {% if candidates|length > 0 %}
+                <div class="mb-3 text-end">
+                    <a href="/qualifications/staff"
+                       target="_blank" rel="noopener"
+                       class="btn btn-sm btn-outline-success"
+                       title="新しい資格者を登録 (別タブで開きます)">
+                        <i class="bi bi-person-plus me-1"></i>資格者新規登録
+                    </a>
+                    <small class="text-muted ms-2">
+                        登録後、この画面をリロードすると選択肢に反映されます
+                    </small>
+                </div>
+                {% endif %}
 
                 {% if candidates|length == 0 %}
                 <div class="alert alert-warning">
@@ -259,12 +305,58 @@
                                 </small>
                             </label>
                         </div>
+
+                        {# ── 証跡ファイルの紐付け ──
+                           この候補 (= 確定後の cert) に紐付ける原本ファイルを指定する。
+                           1 ジョブで複数ファイルをアップした場合、ここで「この cert は
+                           どのファイルに対応するか」を明示しないと、staff_detail で
+                           他の cert のファイルまで全部表示されてしまう。
+                           ファイルが 1 つだけのジョブでは hidden で固定して UI を煩
+                           わせない。
+
+                           候補数とファイル数が等しい場合は「候補 i ↔ ファイル i」を
+                           初期 check する。実運用で最も多い「1 ファイル = 1 cert」を
+                           手間ゼロにするための補助で、ユーザは必要に応じて変更できる。 #}
+                        {% if files|length == 1 %}
+                        <input type="hidden" name="source_files_{{ i }}"
+                               value="{{ files[0].name }}">
+                        {% elif files|length > 1 %}
+                        {% set auto_pair = (candidates|length == files|length) %}
+                        <div class="mb-3 mt-3 border-top pt-3">
+                            <label class="form-label">
+                                <i class="bi bi-paperclip me-1"></i>
+                                証跡ファイル <span class="text-danger">*</span>
+                                <small class="text-muted ms-2">
+                                    (この候補に対応する原本を選択 / 複数可)
+                                </small>
+                            </label>
+                            {% for f in files %}
+                            <div class="form-check">
+                                <input class="form-check-input source-file-checkbox"
+                                       type="checkbox"
+                                       id="src-{{ i }}-{{ loop.index0 }}"
+                                       name="source_files_{{ i }}"
+                                       value="{{ f.name }}"
+                                       data-candidate-index="{{ i }}"
+                                       {% if auto_pair and loop.index0 == i %}checked{% endif %}>
+                                <label class="form-check-label small" for="src-{{ i }}-{{ loop.index0 }}">
+                                    <i class="bi bi-file-earmark me-1"></i>{{ f.name }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                            <div class="form-text">
+                                証跡ファイルを 1 つ以上選択してください (未選択は登録不可)。
+                                表裏セットなど明確に対応するファイルだけにチェックを入れると、
+                                個人ページで正しい原本だけが表示されます。
+                            </div>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
 
                 {% if candidates|length > 0 %}
-                <div class="d-flex justify-content-end gap-2 mb-4">
+                <div class="d-flex justify-content-end gap-2 mb-4 flex-wrap">
                     <a href="/qualifications/pending" class="btn btn-outline-secondary">
                         <i class="bi bi-x-lg me-1"></i>キャンセル
                     </a>
@@ -274,6 +366,23 @@
                 </div>
                 {% endif %}
             </form>
+
+            {# ── ジョブの削除フォーム ──
+               「この OCR ジョブごと破棄したい」用途。POST /jobs/<id>/delete は
+               manager 権限で q_upload_jobs を物理削除し staging も掃除する。
+               classify form 内に置くと submit が衝突するため form 外に置く。 #}
+            {% if has_perm(user, 'qualifications', 'manager') %}
+            <div class="d-flex justify-content-end mt-2">
+                <form method="post"
+                      action="/qualifications/jobs/{{ job.job_id }}/delete"
+                      onsubmit="return confirm('このジョブを削除します。アップロードした原本ファイルも消えます。本当に削除しますか？');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                            title="この OCR ジョブを破棄">
+                        <i class="bi bi-trash me-1"></i>このジョブを削除
+                    </button>
+                </form>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>

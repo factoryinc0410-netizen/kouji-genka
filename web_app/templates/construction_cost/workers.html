@@ -1,16 +1,48 @@
 {% extends "base.html" %}
-{% block title %}作業員単価マスタ - 工事日報集計{% endblock %}
+{% block title %}{% if came_from_qualifications %}資格者管理 — 資格者証管理{% else %}作業員単価マスタ - 工事日報集計{% endif %}{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h3><i class="bi bi-speedometer2 me-2"></i>工事日報集計</h3>
+{# パンくず: 資格コンテキストから来た場合は資格者証管理を起点にする #}
+<div class="mb-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">ホーム</a></li>
+            {% if came_from_qualifications %}
+            <li class="breadcrumb-item"><a href="/qualifications/">資格者証管理</a></li>
+            <li class="breadcrumb-item active">資格者管理</li>
+            {% else %}
+            <li class="breadcrumb-item"><a href="/construction-cost/">工事日報集計</a></li>
+            <li class="breadcrumb-item active">作業員単価マスタ</li>
+            {% endif %}
+        </ol>
+    </nav>
 </div>
 
+<div class="d-flex justify-content-between align-items-center mb-3">
+    {% if came_from_qualifications %}
+    <h3><i class="bi bi-people me-2 text-primary"></i>資格者（作業員）管理</h3>
+    {% else %}
+    <h3><i class="bi bi-speedometer2 me-2"></i>工事日報集計</h3>
+    {% endif %}
+</div>
+
+{# 資格コンテキストから来た時は日報タブを出さない (混乱回避)。
+   日報の他画面に行きたい時はパンくず or 上部メニューから。 #}
+{% if not came_from_qualifications %}
 {% set active_tab = "workers" %}
 {% include "construction_cost/_nav.html" %}
+{% endif %}
 
 <div class="mt-4">
-<h5><i class="bi bi-people me-2"></i>作業員単価マスタ管理</h5>
+<h5><i class="bi bi-people me-2"></i>{% if came_from_qualifications %}スタッフ一覧{% else %}作業員単価マスタ管理{% endif %}</h5>
+{% if came_from_qualifications %}
+<p class="text-muted small mb-0">
+    <i class="bi bi-info-circle me-1"></i>
+    日報の集計対象になる作業員と、資格管理だけに使う「資格管理専用スタッフ」を
+    一元管理する画面です。<strong>「資格管理専用」を ON</strong> にしたスタッフは、
+    日報のテンプレ／集計から自動で除外されます。
+</p>
+{% endif %}
 </div>
 
 {% if msg %}
@@ -67,6 +99,19 @@
                     </button>
                 </div>
             </div>
+            <div class="row g-2 mt-2">
+                <div class="col-12">
+                    <div class="form-check small">
+                        <input class="form-check-input" type="checkbox"
+                               name="is_qualifications_only" value="1"
+                               id="addIsQualOnly">
+                        <label class="form-check-label text-muted" for="addIsQualOnly">
+                            <i class="bi bi-patch-check me-1"></i>
+                            資格管理専用 (日報の作業員一覧・テンプレート・集計から除外)
+                        </label>
+                    </div>
+                </div>
+            </div>
         </form>
     </div>
 </div>
@@ -107,7 +152,15 @@
                     </tr>
                     {% endif %}
                     <tr class="data-row" data-group="{{ grp }}">
-                        <td>{{ w.worker_name }}</td>
+                        <td>
+                            {{ w.worker_name }}
+                            {% if w.is_qualifications_only %}
+                            <span class="badge bg-info text-dark ms-1"
+                                  title="資格管理専用 — 日報の作業員一覧・テンプレ・集計から除外されます">
+                                <i class="bi bi-patch-check me-1"></i>資格管理専用
+                            </span>
+                            {% endif %}
+                        </td>
                         <td>{{ w.role or '-' }}</td>
                         <td>{{ w.group_name or '-' }}</td>
                         <td class="text-end">{{ "{:,.0f}".format(w.daily_rate) }}</td>
@@ -177,6 +230,13 @@
                             {% endif %}
                         </select>
                     </div>
+                    {% if w.is_qualifications_only %}
+                    <div class="alert alert-info py-2 small mb-3">
+                        <i class="bi bi-info-circle me-1"></i>
+                        このスタッフは <strong>資格管理専用</strong> です。
+                        日報の集計対象外なので、以下の単価入力は<strong>任意（0 のままで可）</strong>です。
+                    </div>
+                    {% endif %}
                     <div class="mb-3">
                         <label class="form-label">日当単価</label>
                         <input type="number" name="daily_rate" class="form-control" step="1" value="{{ w.daily_rate }}">
@@ -192,6 +252,21 @@
                     <div class="mb-3">
                         <label class="form-label">交通費</label>
                         <input type="number" name="transport" class="form-control" step="1" value="{{ w.transport }}">
+                    </div>
+                    <hr>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox"
+                               name="is_qualifications_only" value="1"
+                               id="editIsQualOnly{{ w.worker_id }}"
+                               {% if w.is_qualifications_only %}checked{% endif %}>
+                        <label class="form-check-label" for="editIsQualOnly{{ w.worker_id }}">
+                            <i class="bi bi-patch-check me-1"></i>
+                            資格管理専用
+                        </label>
+                        <div class="form-text small">
+                            ON にすると、日報の作業員一覧・テンプレート・集計から除外されます
+                            (資格者証管理側からは引き続き選択できます)。
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
